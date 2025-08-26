@@ -10,10 +10,12 @@ Ark Blueprints は、ボートレースのデータを **収集・前処理・�
 ---
 
 ## 📂 ディレクトリ構造
+```
 ark-blueprints/
 ├─ scripts/ # 実行用スクリプト
 │ └─ scrape.py # スクレイピングスクリプト
 └─ README.md # この説明書
+```
 
 
 ---
@@ -38,3 +40,4 @@ python scripts/scrape.py
 
 
 ---
+
