@@ -1,1 +1,40 @@
-Assembling the scattered pieces into a vessel that may one day sail.
+# Ark Blueprints
+未完の部品を一つずつ集め、いつか航海に出る箱舟を形にするプロジェクト。⛵
+
+---
+
+## 📝 プロジェクト概要
+Ark Blueprints は、ボートレースのデータを **収集・前処理・特徴量生成・機械学習・推論** まで行うことを目指す開発プロジェクトです。  
+まずはスクレイピングによるデータ収集から始めています。
+
+---
+
+## 📂 ディレクトリ構造
+ark-blueprints/
+├─ scripts/ # 実行用スクリプト
+│ └─ scrape.py # スクレイピングスクリプト
+└─ README.md # この説明書
+
+
+---
+
+## 🚀 使い方
+
+### スクレイピング実行
+```bash
+python scripts/scrape.py
+実行すると、ボートレース公式サイトからデータを取得し、data/html/ 以下に保存します。
+※ 大量のデータを扱うため、今後 data/ ディレクトリは .gitignore でGit管理対象外にします。
+
+🔮 今後の予定
+
+前処理スクリプトの追加（preprocess.py）
+
+特徴量生成スクリプトの追加（features.py）
+
+モデル学習スクリプトの追加（train.py）
+
+推論スクリプトの追加（predict.py）
+
+
+---
