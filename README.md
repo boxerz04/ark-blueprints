@@ -8,15 +8,16 @@ Ark Blueprints は、ボートレースのデータを **収集・前処理・�
 まずはスクレイピングによるデータ収集から始めています。
 
 ---
-"""
+
 ## 📂 ディレクトリ構造
+```
 ark-blueprints/
 ├─ scripts/ # 実行用スクリプト
 │ └─ scrape.py # スクレイピングスクリプト
 ├─ data/ # スクレイピング結果を保存（Git管理外）
 ├─ .gitignore # data/ を除外設定
 └─ README.md # この説明書
-"""
+```
 
 ---
 
@@ -44,3 +45,4 @@ python scripts/scrape.py --date 20250827
 モデル学習スクリプト（train.py）
 
 推論スクリプト（predict.py）
+
