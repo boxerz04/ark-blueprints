@@ -8,36 +8,39 @@ Ark Blueprints は、ボートレースのデータを **収集・前処理・�
 まずはスクレイピングによるデータ収集から始めています。
 
 ---
-
+"""
 ## 📂 ディレクトリ構造
-```
 ark-blueprints/
 ├─ scripts/ # 実行用スクリプト
 │ └─ scrape.py # スクレイピングスクリプト
+├─ data/ # スクレイピング結果を保存（Git管理外）
+├─ .gitignore # data/ を除外設定
 └─ README.md # この説明書
-```
-
+"""
 
 ---
 
 ## 🚀 使い方
 
-### スクレイピング実行
-```bash
+### スクレイピング実行（今日の日付で取得）
+```powershell
 python scripts/scrape.py
-実行すると、ボートレース公式サイトからデータを取得し、data/html/ 以下に保存します。
-※ 大量のデータを扱うため、今後 data/ ディレクトリは .gitignore でGit管理対象外にします。
+日付を指定して取得
+powershell
+コードをコピーする
+python scripts/scrape.py --date 2025-08-27
+python scripts/scrape.py --date 20250827
+データは data/html/ 以下に保存されます。
+
+保存先ディレクトリが存在しない場合でも、自動的に作成されます。
+
+.bin ファイルやエラーログなど大容量データは data/ に保存されますが、.gitignore によりGit管理からは除外されます。
 
 🔮 今後の予定
+前処理スクリプト（preprocess.py）
 
-前処理スクリプトの追加（preprocess.py）
+特徴量生成スクリプト（features.py）
 
-特徴量生成スクリプトの追加（features.py）
+モデル学習スクリプト（train.py）
 
-モデル学習スクリプトの追加（train.py）
-
-推論スクリプトの追加（predict.py）
-
-
----
-
+推論スクリプト（predict.py）
