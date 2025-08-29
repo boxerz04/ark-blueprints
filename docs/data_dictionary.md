@@ -1,7 +1,13 @@
+
+---
+
+# data_dictionary.md（差し替え）
+
+```markdown
 # 📑 Data Dictionary
 
-Ark Blueprints プロジェクトで生成される **63列の基本データCSV** のカラム仕様書です。  
-各カラムが「どのHTMLから抽出されたのか」や「どういう意味を持つのか」をまとめています。  
+Ark Blueprints プロジェクトで生成される **基本CSV（64列）** のカラム仕様です。  
+（63列の基本情報 + 節ID 1列）
 
 ---
 
@@ -52,11 +58,11 @@ Ark Blueprints プロジェクトで生成される **63列の基本データCSV
 | entry_tenji | beforeinfo | 展示進入順（数値化） |
 | ST_tenji    | beforeinfo | 展示スタートタイミング |
 | player      | beforeinfo | 選手名（展示情報基準） |
-| 調整重量 (counter_weight) | beforeinfo | 重量調整（kg） |
-| 展示タイム (time_tenji)  | beforeinfo | 展示タイム |
-| チルト (Tilt)            | beforeinfo | チルト角度 |
-| プロペラ (propeller)     | beforeinfo | プロペラ状況 |
-| 部品交換 (parts_exchange)| beforeinfo | 部品交換有無 |
+| counter_weight | beforeinfo | 重量調整（kg） |
+| time_tenji  | beforeinfo | 展示タイム |
+| Tilt        | beforeinfo | チルト角度 |
+| propeller   | beforeinfo | プロペラ状況 |
+| parts_exchange | beforeinfo | 部品交換有無 |
 | temperature | beforeinfo | 気温 |
 | weather     | beforeinfo | 天候 |
 | wind_speed  | beforeinfo | 風速（m/s） |
@@ -115,12 +121,13 @@ Ark Blueprints プロジェクトで生成される **63列の基本データCSV
 
 ---
 
-## 8. 加工で追加したカラム（2列）
+## 8. 加工で追加したカラム（3列）
 
 | カラム名 | 出典 | 説明 |
 |----------|------|------|
 | is_wakunari | 加工 | 進入が枠なりかどうか（1=枠なり、0=非枠なり） |
 | ST_rank     | 加工 | 各レースごとのスタートタイム順位 |
+| section_id  | 加工 | 節単位のユニークID（YYYYMMDD_場コード） |
 
 ---
 
@@ -132,5 +139,5 @@ Ark Blueprints プロジェクトで生成される **63列の基本データCSV
 - raceindex: 2列  
 - pay/index: 9列  
 - 管理カラム: 4列  
-- 加工: 2列  
-**合計: 63列**
+- 加工: 3列  
+**合計: 64列**
