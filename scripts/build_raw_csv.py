@@ -5,6 +5,7 @@ import glob
 import argparse
 import traceback
 from datetime import datetime
+from typing import Optional
 
 import numpy as np
 import pandas as pd
@@ -26,7 +27,7 @@ def parse_args():
     )
     return p.parse_args()
 
-def normalize_yyyymmdd(s: str | None) -> str:
+def normalize_yyyymmdd(s: Optional[str]) -> str:
     if s is None:
         return datetime.now().strftime("%Y%m%d")
     s = s.strip()
@@ -36,7 +37,7 @@ def normalize_yyyymmdd(s: str | None) -> str:
         return datetime.strptime(s, "%Y-%m-%d").strftime("%Y%m%d")
     raise ValueError("Invalid --date format. Use YYYY-MM-DD or YYYYMMDD.")
 
-def load_html(path: str) -> BeautifulSoup | None:
+def load_html(path: str) -> Optional[BeautifulSoup]:
     try:
         with open(path, "rb") as f:
             html = f.read().decode("utf-8", errors="ignore")
@@ -45,6 +46,13 @@ def load_html(path: str) -> BeautifulSoup | None:
         print(f"[ERROR] failed to load {path}")
         traceback.print_exc()
         return None
+
+def make_section_id(row: pd.Series) -> str:
+    """
+    section_id を 日付主体の 'YYYYMMDD_code' 形式で作る。
+    schedule が壊れていても date/code があれば安定して作れる。
+    """
+    return f"{row.get('date','')}_{str(row.get('code','')).zfill(2)}"
 
 
 # =============== メイン ===============
@@ -538,6 +546,9 @@ def main():
             "枠": "wakuban"
         }
         raw.rename(columns=column_name_map, inplace=True)
+
+        # --- 節ID（日付主体）を追加 ---
+        raw["section_id"] = raw.apply(make_section_id, axis=1)
 
         out_raw = f'data/raw/{date}_raw.csv'
         raw.to_csv(out_raw, index=False, encoding="utf_8_sig")
