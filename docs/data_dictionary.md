@@ -1,4 +1,3 @@
-
 ---
 
 # data_dictionary.md（差し替え）
