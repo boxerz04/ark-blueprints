@@ -14,9 +14,9 @@ Ark Blueprints は、ボートレースのデータを **収集・前処理・�
 ```text
 ark-blueprints/
 │
-├─ data/                # データ格納（.gitignore推奨）
+├─ data/                # データ格納（.gitignore 推奨）
 │   ├─ html/            # スクレイピングで取得したHTML(.bin)
-│   ├─ raw/             # 日次レースデータCSV (63列)
+│   ├─ raw/             # 日次レースデータCSV (64列: 基本63列 + section_id)
 │   └─ refund/          # 払戻金データCSV
 │
 ├─ notebooks/           # Jupyter Notebookでの探索・分析
@@ -32,11 +32,16 @@ ark-blueprints/
 │   ├─ model.py
 │   └─ utils.py
 │
+├─ docs/                # プロジェクトドキュメント
+│   ├─ data_dictionary.md   # 64列CSVのカラム仕様
+│   └─ design_notes.md      # 設計ノート・分析メモ
+│
 ├─ tests/               # テストコード
 │
 ├─ requirements.txt     # 必要なライブラリ
 ├─ README.md            # プロジェクト概要・説明書
 └─ .gitignore
+```
 🚀 使い方
 1. スクレイピング（HTML保存）
 powershell
@@ -55,7 +60,7 @@ python scripts/scrape.py --date 20250827
 スクレイピングで保存した HTML (.bin) から日次の CSV を生成します。
 出力されるのは以下の2種類です：
 
-data/raw/YYYYMMDD_raw.csv（63列のレースデータ）
+data/raw/YYYYMMDD_raw.csv（64列のレースデータ）
 
 data/refund/YYYYMMDD_refund.csv（払戻金データ）
 
@@ -82,3 +87,4 @@ Python 3.9 / 3.10 / 3.12 系で動作確認済み
 必要なライブラリは requirements.txt に記載予定
 
 大容量データは Git 管理せず data/ 以下に直接保存
+
