@@ -1,8 +1,5 @@
 ---
 
-# data_dictionary.md（差し替え）
-
-```markdown
 # 📑 Data Dictionary
 
 Ark Blueprints プロジェクトで生成される **基本CSV（64列）** のカラム仕様です。  
