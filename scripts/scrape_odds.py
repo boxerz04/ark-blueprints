@@ -18,7 +18,7 @@ headers = {
 semaphore = asyncio.Semaphore(5)
 
 
-async def fetch_and_save(session, url, save_path, title_keywords=("準優勝戦", "優勝戦")):
+async def fetch_and_save(session, url, save_path, title_keywords=("準優勝戦", "準優進出戦", "優勝戦")):
     """URLを取得して条件に一致すればHTML保存"""
     try:
         async with semaphore:
