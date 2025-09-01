@@ -31,6 +31,8 @@ ark-blueprints/
 │   ├─ refund/              # 払戻金データCSV
 │   └─ timeline/            # 直前オッズ収集用のタイムラインCSV
 │
+├─ logs/                    # 実行ログ（.gitignore 推奨）
+│
 ├─ notebooks/               # Jupyter Notebookでの探索・分析
 │
 ├─ scripts/                 # スクリプト群
@@ -73,7 +75,7 @@ python scripts/scrape.py --date 2025-08-27
 python scripts/scrape.py --date 20250827
 ```
 
-取得データは `data/html/` 以下に保存されます。保存先フォルダが存在しない場合でも自動作成されます。
+👉取得データは `data/html/` 以下に保存されます。保存先フォルダが存在しない場合でも自動作成されます。
 
 ### 2. CSV生成（raw + refund）
 
@@ -96,17 +98,17 @@ python scripts/build_raw_csv.py --date 20250827
 未確定レースの締切予定時刻を取得して CSV を生成します。
 
 ```powershell
-python scripts/build_timeline_live.py
+python scripts/build_timeline_live.py --date 20250901
 ```
 
-出力: `data/timeline/YYYYMMDD_timeline_live.csv`
+👉 `data/timeline/20250901_timeline_live.csv` が生成されます。
 
 ### 4. スケジューラで直前オッズを収集
 
-指定した分数前に `scrape_odds.py` を自動実行します。
+👉 締切5分前に scrape_odds.py が実行され、準優進出戦・準優勝戦・優勝戦のオッズを保存します。
 
 ```powershell
-python scripts/run_odds_scheduler.py --timeline data/timeline/20250831_timeline_live.csv --mins_before 5
+python scripts/run_odds_scheduler.py --timeline data/timeline/20250901_timeline_live.csv
 ```
 
 ---
@@ -125,3 +127,5 @@ python scripts/run_odds_scheduler.py --timeline data/timeline/20250831_timeline_
 * Python 3.9 / 3.10 / 3.12 系で動作確認済み
 * 必要なライブラリは requirements.txt に記載予定
 * 大容量データは Git 管理せず data/ 以下に直接保存
+* ログは logs/ 以下に保存（.gitignore 済み）
+
