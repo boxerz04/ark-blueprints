@@ -27,6 +27,9 @@ headers = {
 # 同時リクエスト数の制限
 semaphore = asyncio.Semaphore(5)
 
+# プロジェクトルートを基準に保存する
+root_dir = os.path.dirname(os.path.dirname(__file__))
+
 def ensure_parent_dir(path: str) -> None:
     """保存先フォルダが無ければ作成する"""
     parent = os.path.dirname(path)
@@ -90,12 +93,12 @@ async def process_race(session, yyyymmdd, code, rno):
     }
 
     tasks = [
-        fetch(session, urls["racelist"],     f"data/html/racelist/racelist{race_id}.bin"),
-        fetch(session, urls["pcexpect"],     f"data/html/pcexpect/pcexpect{race_id}.bin"),
-        fetch(session, urls["beforeinfo"],   f"data/html/beforeinfo/beforeinfo{race_id}.bin"),
-        fetch(session, urls["raceresult"],   f"data/html/raceresult/raceresult{race_id}.bin"),
-        fetch(session, urls["raceindex"],    f"data/html/raceindex/raceindex{yyyymmdd}{code}.bin"),
-        fetch(session, urls["rankingmotor"], f"data/html/rankingmotor/rankingmotor{yyyymmdd}{code}.bin"),
+        fetch(session, urls["racelist"],     os.path.join(root_dir, "data/html/racelist",     f"racelist{race_id}.bin")),
+        fetch(session, urls["pcexpect"],     os.path.join(root_dir, "data/html/pcexpect",     f"pcexpect{race_id}.bin")),
+        fetch(session, urls["beforeinfo"],   os.path.join(root_dir, "data/html/beforeinfo",   f"beforeinfo{race_id}.bin")),
+        fetch(session, urls["raceresult"],   os.path.join(root_dir, "data/html/raceresult",   f"raceresult{race_id}.bin")),
+        fetch(session, urls["raceindex"],    os.path.join(root_dir, "data/html/raceindex",    f"raceindex{yyyymmdd}{code}.bin")),
+        fetch(session, urls["rankingmotor"], os.path.join(root_dir, "data/html/rankingmotor", f"rankingmotor{yyyymmdd}{code}.bin")),
     ]
     await asyncio.gather(*tasks)
 
@@ -112,7 +115,7 @@ async def main():
     async with aiohttp.ClientSession() as session:
         # 開催日単位ページ：pay
         pay_url = f"https://www.boatrace.jp/owpc/pc/race/pay?hd={yyyymmdd}"
-        await fetch(session, pay_url, f"data/html/pay/pay{yyyymmdd}.bin")
+        await fetch(session, pay_url, os.path.join(root_dir, "data/html/pay", f"pay{yyyymmdd}.bin"))
 
         # 開催場コード（jcd）を pay ページから抽出
         try:
@@ -134,7 +137,7 @@ async def main():
 
             # index も保存
             index_url = pay_url.replace("pay", "index")
-            await fetch(session, index_url, f"data/html/index/index{yyyymmdd}.bin")
+            await fetch(session, index_url, os.path.join(root_dir, "data/html/index", f"index{yyyymmdd}.bin"))
 
             # 各場×各Rを取得
             tasks = []
@@ -147,8 +150,8 @@ async def main():
 
         except Exception:
             print(f"[ERROR] processing date {yyyymmdd}")
-            ensure_parent_dir(f"data/html/{yyyymmdd}_html_error.log")
-            with open(f"data/html/{yyyymmdd}_html_error.log", "a", encoding="utf-8") as f:
+            ensure_parent_dir(os.path.join(root_dir, "data/html", f"{yyyymmdd}_html_error.log"))
+            with open(os.path.join(root_dir, "data/html", f"{yyyymmdd}_html_error.log"), "a", encoding="utf-8") as f:
                 traceback.print_exc(file=f)
 
     print("処理が終了しました")
