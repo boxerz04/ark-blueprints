@@ -12,6 +12,13 @@ import pandas as pd
 from bs4 import BeautifulSoup
 from tqdm import tqdm
 
+# ================= ルート基準のパスヘルパ =================
+# プロジェクトルート（…/ark-blueprints）
+root_dir = os.path.dirname(os.path.dirname(__file__))
+
+def data_path(*parts) -> str:
+    """プロジェクトルート/data/ 以下への絶対パスを生成"""
+    return os.path.join(root_dir, "data", *parts)
 
 # =============== ユーティリティ ===============
 
@@ -63,11 +70,11 @@ def main():
     print(f"処理する日付: {date}")
 
     # 出力先フォルダ
-    ensure_dir("data/raw")
-    ensure_dir("data/refund")
+    ensure_dir(data_path("raw"))
+    ensure_dir(data_path("refund"))
 
     # ---------- pay（開催一覧） ----------
-    pay_path = f"data/html/pay/pay{date}.bin"
+    pay_path = data_path("html", "pay", f"pay{date}.bin")
     soup = load_html(pay_path)
     if soup is None:
         print(f"[ERROR] pay ファイルがありません: {pay_path}")
@@ -125,7 +132,7 @@ def main():
     df_pay = pd.DataFrame(race_data, columns=['place', 'code', 'race_grade', 'race_type', 'race_attribute'])
 
     # ---------- index（開催タイトル/日次/会期） ----------
-    index_path = f"data/html/index/index{date}.bin"
+    index_path = data_path("html", "index", f"index{date}.bin")
     soup = load_html(index_path)
     if soup is None:
         print(f"[ERROR] index ファイルがありません: {index_path}")
@@ -213,7 +220,7 @@ def main():
     # place で pay と index を結合 → 会場コード付きの開催情報
     race_merged = pd.merge(df_pay, df_index_subset, on="place", how="left")
     code_list = race_merged['code'].tolist()
-    print(f'【{date}】の開催は【{len(code_list)}】場です')
+    print(f'の開催は場です')
 
     # ---------- 各会場 × 12R ----------
     for code in code_list:
@@ -222,7 +229,7 @@ def main():
                 race_id = f"{date}{code}{str(rno).zfill(2)}"
 
                 # ===== racelist =====
-                with open(f'data/html/racelist/racelist{race_id}.bin', 'rb') as file:
+                with open(data_path("html", "racelist", f"racelist{race_id}.bin"), 'rb') as file:
                     racelist_content = file.read()
                 df = pd.read_html(racelist_content)
 
@@ -291,7 +298,7 @@ def main():
                     raw = pd.concat([racelist, flst, motor], axis=1)
 
                     # ===== pcexpect =====
-                    with open(f'data/html/pcexpect/pcexpect{race_id}.bin', 'rb') as file:
+                    with open(data_path("html", "pcexpect", f"pcexpect{race_id}.bin"), 'rb') as file:
                         pcexpect_content = file.read()
                     soup_px = BeautifulSoup(pcexpect_content, 'html.parser')
 
@@ -347,7 +354,7 @@ def main():
                     raw['timetable'] = end_time
 
                     # ===== beforeinfo =====
-                    with open(f'data/html/beforeinfo/beforeinfo{race_id}.bin', 'rb') as file:
+                    with open(data_path("html", "beforeinfo", f"beforeinfo{race_id}.bin"), 'rb') as file:
                         beforeinfo_content = file.read()
                     df_b = pd.read_html(beforeinfo_content)
 
@@ -363,7 +370,7 @@ def main():
                         ex_entry['entry'] = ex_entry['コース'].str[:1]
                         ex_entry['ST_tenji'] = ex_entry['コース'].str[-4:]
                     except Exception:
-                        print(f'【{race_id}】スタート展示がないようです')
+                        print(f'スタート展示がないようです')
                         ex_entry['entry'] = ['1', '2', '3', '4', '5', '6']
                         ex_entry['ST_tenji'] = np.nan
 
@@ -426,7 +433,7 @@ def main():
                     raw = pd.concat([raw, ex_entry, beforeinfo, weather_df], axis=1)
 
                     # ===== raceresult =====
-                    with open(f'data/html/raceresult/raceresult{race_id}.bin', 'rb') as file:
+                    with open(data_path("html", "raceresult", f"raceresult{race_id}.bin"), 'rb') as file:
                         raceresult_content = file.read()
                     df_r = pd.read_html(raceresult_content)
 
@@ -469,7 +476,7 @@ def main():
                     raw = pd.concat([raw, finish], axis=1)
 
                     # ===== raceindex（選手性別など） =====
-                    with open(f'data/html/raceindex/raceindex{date}{code}.bin', 'rb') as file:
+                    with open(data_path("html", "raceindex", f"raceindex{date}{code}.bin"), 'rb') as file:
                         raceindex_content = file.read()
                     soup_ri = BeautifulSoup(raceindex_content, 'html.parser')
 
@@ -510,27 +517,27 @@ def main():
                     refund.insert(0, 'race_id', race_id)
 
                     # 一時保存（後で日全体に結合）
-                    raw.to_pickle(f'data/{race_id}_raw.pickle')
-                    refund.to_pickle(f'data/{race_id}_refund.pickle')
+                    raw.to_pickle(data_path(f"{race_id}_raw.pickle"))
+                    refund.to_pickle(data_path(f"{race_id}_refund.pickle"))
 
                 except Exception:
-                    print(f'【{race_id}】のレース結果はありません！')
+                    print(f'のレース結果はありません！')
                     tb = traceback.format_exc()
                     print("エラー情報\n" + tb)
                     if "remarks2 = df[5].iloc[0,0]" in tb:
-                        print(f'【{race_id}】レース不成立')
+                        print(f'レース不成立')
                     elif "ex_entry['entry'] = ex_entry['コース'].str[:1]" in tb:
-                        print(f'【{race_id}】レース中止')
+                        print(f'レース中止')
                     elif "df[1]['player_id'] = df[1]['ボートレーサー'].str[:4]" in tb:
-                        print(f'【{race_id}】荒天によるレース中止')
+                        print(f'荒天によるレース中止')
 
             except Exception:
-                print(f'【{date}{code}{str(rno).zfill(2)}】アクシデントによるレース中止')
+                print(f'アクシデントによるレース中止')
 
     # ---------- 日の raw/refund を結合して出力 ----------
     # raw
-    ensure_dir("data/raw")
-    pickle_files = glob.glob(f'data/{date}*_raw.pickle')
+    ensure_dir(data_path("raw"))
+    pickle_files = glob.glob(os.path.join(root_dir, 'data', f'{date}*_raw.pickle'))
     if pickle_files:
         raw_list = [pd.read_pickle(p) for p in pickle_files]
         raw = pd.concat(raw_list, axis=0).reset_index(drop=True)
@@ -550,26 +557,26 @@ def main():
         # --- 節ID（日付主体）を追加 ---
         raw["section_id"] = raw.apply(make_section_id, axis=1)
 
-        out_raw = f'data/raw/{date}_raw.csv'
+        out_raw = data_path("raw", f"{date}_raw.csv")
         raw.to_csv(out_raw, index=False, encoding="utf_8_sig")
         print(f"保存しました: {out_raw} ({len(raw)} 行, {len(raw.columns)} 列)")
     else:
         print("[WARN] raw の pickle が見つかりませんでした")
 
     # refund
-    ensure_dir("data/refund")
-    refund_pickles = glob.glob(f'data/{date}*_refund.pickle')
+    ensure_dir(data_path("refund"))
+    refund_pickles = glob.glob(os.path.join(root_dir, 'data', f'{date}*_refund.pickle'))
     if refund_pickles:
         refund_list = [pd.read_pickle(p) for p in refund_pickles]
         refund = pd.concat(refund_list, axis=0).reset_index(drop=True)
-        out_refund = f'data/refund/{date}_refund.csv'
+        out_refund = data_path("refund", f"{date}_refund.csv")
         refund.to_csv(out_refund, index=False, encoding="utf_8_sig")
         print(f"保存しました: {out_refund} ({len(refund)} 行, {len(refund.columns)} 列)")
     else:
         print("[WARN] refund の pickle が見つかりませんでした")
 
     # 一時 pickle を削除
-    for file_path in glob.glob('data/*.pickle'):
+    for file_path in glob.glob(os.path.join(root_dir, 'data', '*.pickle')):
         try:
             os.remove(file_path)
         except Exception:
