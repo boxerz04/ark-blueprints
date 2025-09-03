@@ -1,0 +1,19 @@
+{
+  "created_at": "2025-09-03 14:33:03",
+  "x_repr": "dense",
+  "x_shape": [
+    5562,
+    90
+  ],
+  "y_len": 5562,
+  "model": "LightGBM",
+  "params": {
+    "n_estimators": 400,
+    "learning_rate": 0.05,
+    "num_leaves": 63,
+    "subsample": 0.8,
+    "colsample_bytree": 0.8,
+    "random_state": 42,
+    "n_jobs": -1
+  }
+}
