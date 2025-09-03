@@ -2,3 +2,6 @@
 data/
 # 実行ログは管理対象外
 /logs/
+# Python cache
+__pycache__/
+*.pyc
