@@ -6,13 +6,16 @@
 
 ## 📝 プロジェクト概要
 
-Ark Blueprints は、ボートレースのデータを **収集・前処理・特徴量生成・機械学習・推論** まで行うことを目指す開発プロジェクトです。
+Ark Blueprints は、ボートレースのデータを **収集 → 前処理 → 特徴量生成 → 機械学習 → 推論** まで行うことを目指す開発プロジェクトです。  
 現在は以下の機能が完成しています：
 
 * スクレイピングによるデータ収集（レース情報・オッズ）
 * 日次 CSV 生成（raw + refund）
 * タイムライン生成（未確定レースの締切予定時刻を取得）
 * スケジューラによる直前オッズ収集（準優・優勝戦）
+* 前処理（欠損値処理・型変換・失格レース除外・ST/ST展示変換）
+* 特徴量生成（数値/カテゴリ列の選定、OneHot + 標準化）
+* LightGBM による初回学習・モデル保存
 
 ---
 
@@ -29,18 +32,22 @@ ark-blueprints/
 │   │   └─ raceresult/      # レース結果ページHTML
 │   ├─ raw/                 # 日次レースデータCSV (64列: 基本63列 + section_id)
 │   ├─ refund/              # 払戻金データCSV
-│   └─ timeline/            # 直前オッズ収集用のタイムラインCSV
+│   ├─ timeline/            # 直前オッズ収集用のタイムラインCSV
+│   └─ processed/           # 前処理・特徴量・ラベルなどの成果物
 │
 ├─ logs/                    # 実行ログ（.gitignore 推奨）
 │
 ├─ notebooks/               # Jupyter Notebookでの探索・分析
+│   ├─ preprocess.ipynb     # 前処理検証
+│   └─ features.ipynb       # 特徴量検証
 │
 ├─ scripts/                 # スクリプト群
-│   ├─ scrape.py            # レースデータスクレイピング（HTML保存）
-│   ├─ build_raw_csv.py     # HTML → CSV変換 (raw.csv + refund.csv)
-│   ├─ build_timeline_live.py # 未確定レースのタイムライン生成
-│   ├─ run_odds_scheduler.py  # タイムラインに基づき直前オッズ収集をスケジューリング
-│   └─ scrape_odds.py       # オッズスクレイピング（3連単・2連単/複）
+│   ├─ scrape.py
+│   ├─ build_raw_csv.py
+│   ├─ build_timeline_live.py
+│   ├─ run_odds_scheduler.py
+│   ├─ scrape_odds.py
+│   └─ train.py             # 学習スクリプト（model.pkl 保存）
 │
 ├─ src/                     # 共通関数・クラス
 │   ├─ __init__.py
@@ -49,14 +56,20 @@ ark-blueprints/
 │   ├─ model.py
 │   └─ utils.py
 │
+├─ models/                  # 保存済みモデル
+│   └─ latest/
+│       ├─ model.pkl
+│       ├─ feature_pipeline.pkl
+│       └─ train_meta.json
+│
 ├─ docs/                    # プロジェクトドキュメント
-│   ├─ data_dictionary.md   # 64列CSVのカラム仕様
-│   └─ design_notes.md      # 設計ノート・分析メモ
+│   ├─ data_dictionary.md
+│   └─ design_notes.md
 │
 ├─ tests/                   # テストコード
 │
-├─ requirements.txt         # 必要なライブラリ
-├─ README.md                # プロジェクト概要・説明書
+├─ requirements.txt
+├─ README.md
 └─ .gitignore
 ```
 
@@ -111,14 +124,40 @@ python scripts/build_timeline_live.py --date 20250901
 python scripts/run_odds_scheduler.py --timeline data/timeline/20250901_timeline_live.csv
 ```
 
+### 5. 前処理
+
+JupyterLab で以下を実行し、`data/processed/master.csv` を生成します:
+```powershell
+notebooks/preprocess.ipynb
+```
+
+### 6. 特徴量生成
+
+JupyterLab で以下を実行し、成果物を保存します:
+```powershell
+notebooks/features.ipynb
+```
+出力:
+* `data/processed/X.npz`, `y.csv`, `ids.csv`
+* `models/latest/feature_pipeline.pkl`
+
+### 7. 学習
+
+スクリプトで学習を実行します:
+```powershell
+python scripts/train.py
+```
+出力:
+* `models/latest/model.pkl`
+* `models/latest/train_meta.json`
 ---
 
 ## 🔮 今後の予定
 
-* 前処理スクリプト（preprocess.py）: 欠損値処理、型変換
-* 特徴量生成スクリプト（features.py）: ST差、展示データ加工など
-* モデル学習スクリプト（train.py）: LightGBM等による学習
 * 推論スクリプト（predict.py）: 予測出力
+* 特徴量エンジニアリング（例: ST差・艇ごとの比較特徴）
+* 時系列検証の強化
+* モデルチューニング（LightGBMパラメータ最適化）
 
 ---
 
@@ -128,4 +167,5 @@ python scripts/run_odds_scheduler.py --timeline data/timeline/20250901_timeline_
 * 必要なライブラリは requirements.txt に記載予定
 * 大容量データは Git 管理せず data/ 以下に直接保存
 * ログは logs/ 以下に保存（.gitignore 済み）
+
 
