@@ -176,6 +176,37 @@ def read_html_tables_robust(html_or_url: str):
                     return pd.read_html(StringIO(resp.text), flavor="html5lib")
             raise
 
+# ======== 学習側と同一ルールの ST 解析 ========
+def parse_st(val):
+    """
+    'F.01' -> -0.01, '0.07' -> +0.07, 'L.03' -> +0.03
+    '3  L' / '3F.01' の混入は 'L' / 'F.01' として解釈。その他は NaN。
+    """
+    if val is None:
+        return np.nan
+    t = str(val).strip()
+    if t == "" or t in {"-", "—", "ー", "―"}:
+        return np.nan
+    t = t.replace("Ｆ", "F").replace("Ｌ", "L")
+    m = re.match(r"^\d+\s*([FL](?:\.\d+)?)$", t, flags=re.I)
+    if m:
+        t = m.group(1)
+    sign = 1.0
+    if t[:1].lower() == "f":
+        sign, t = -1.0, t[1:].strip()
+    elif t[:1].lower() == "l":
+        sign, t =  1.0, t[1:].strip()
+    if re.fullmatch(r"\d{2}", t):
+        t = "0." + t
+    if t.startswith("."):
+        t = "0" + t
+    if t == "" or not re.fullmatch(r"\d+(\.\d+)?", t):
+        return np.nan
+    try:
+        return sign * float(t)
+    except ValueError:
+        return np.nan
+
 # =============== 解析：pay / index ===============
 def parse_pay(soup_pay: BeautifulSoup) -> pd.DataFrame:
     image_tags = soup_pay.find_all('img', alt=True)
@@ -293,11 +324,9 @@ def parse_index(soup_idx: BeautifulSoup, date: str) -> pd.DataFrame:
             data_idx.append({
                 "place": venue_name,
                 "title": title,
-                "schedule": schedule,
                 "day": day_number,
-                "race_grade_idx": race_grade,
-                "race_attribute_idx": race_attribute,
-                "section": duration
+                "section": duration,
+                "schedule": schedule
             })
 
     df_index = pd.DataFrame(data_idx)
@@ -472,7 +501,7 @@ def build_live_raw(date: str, jcd: str, rno: str, online: bool) -> pd.DataFrame:
         except Exception:
             ex_entry = pd.DataFrame({"entry": list("123456"), "ST_tenji": [np.nan]*6})
 
-        # ST_tenji を "0.XX" 形式に正規化
+        # ST_tenji を "0.XX" 形式に正規化（最終的には parse_st が面倒を見る）
         for idx_, row_ in ex_entry.iterrows():
             if pd.notnull(row_['ST_tenji']):
                 row_['ST_tenji'] = '0' + str(row_['ST_tenji']).strip()
@@ -687,6 +716,29 @@ def main():
             print(f"[WARN] 列順アラインに失敗: {type(e).__name__}: {e}", file=sys.stderr)
     else:
         print(f"[WARN] 参照CSVが見つかりませんでした（data/raw/*_raw.csv）。列順は現状のまま保存します。", file=sys.stderr)
+
+    # === ここから追加：前処理器（v1.0.2）に合わせて ST_tenji → 数値化、ST_tenji_rank を生成 ===
+    # ST_tenji が無ければ作っておく（NaN）
+    if "ST_tenji" not in df.columns:
+        df["ST_tenji"] = np.nan
+    # 数値化（符号付き秒：F→負、L→正）
+    df["ST_tenji"] = df["ST_tenji"].apply(parse_st).astype(float)
+
+    # レース内順位（小さい=早い → 1位）※ 単一レースでも race_id で groupby してOK
+    if "race_id" in df.columns:
+        df["ST_tenji_rank"] = (
+            df.groupby("race_id")["ST_tenji"]
+              .rank(method="min", ascending=True)
+              .astype("Int64")
+        )
+    else:
+        df["ST_tenji_rank"] = df["ST_tenji"].rank(method="min", ascending=True).astype("Int64")
+
+    # ガード：展示STが非数値（L 単独等）を含むレースは推論中止（現行ルール）
+    if df["ST_tenji"].isna().any():
+        print("[ERROR] 推論中止: 展示STに非数値（L等）が含まれています。", file=sys.stderr)
+        sys.exit(2)
+    # === 追加ここまで ===
 
     df.to_csv(out_csv, index=False, encoding="utf_8_sig")
     print(f"[OK] saved: {out_csv}  (rows={len(df)}, cols={len(df.columns)})")
