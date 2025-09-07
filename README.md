@@ -106,7 +106,53 @@ python scripts/build_raw_csv.py --date 2025-08-27
 python scripts/build_raw_csv.py --date 20250827
 ```
 
-### 3. タイムライン生成
+### 3. 前処理（master.csv生成 + 例外検知レポート）
+
+```powershell
+python scripts/preprocess.py --raw-dir data/raw --out data/processed/master.csv --reports-dir data/processed/reports
+
+```
+
+### 4. 特徴量生成
+
+当面は `notebooks/features.ipynb` を実行する。  
+👉出力:
+
+- `data/processed/X.npz`  
+- `data/processed/y.csv`  
+- `data/processed/ids.csv`  
+- `models/latest/feature_pipeline.pkl`
+
+
+### 5. 学習（モデル生成 + 評価指標記録）
+
+```powershell
+python scripts/train.py --version-tag v1.0.2 --notes "人間予想上位互換モデル"
+
+```
+👉 出力:
+
+- `models/runs/<model_id>/model.pkl`
+- `models/runs/<model_id>/feature_pipeline.pkl`
+- `models/runs/<model_id>/train_meta.json`
+- `models/latest/` にもコピー
+
+### 6. 推論（1レース予測）
+
+```powershell
+# 事前に公式HTMLを取得して保存
+python scripts\scrape_one_race.py --date 20250907 --jcd 19 --race 12
+
+# ライブ用の “raw相当(6行)” を生成（--online で必要HTMLを自動取得＆cache）
+python scripts\build_live_row.py --date 20250907 --jcd 19 --race 12 --online --out data\live\raw_20250907_19_12.csv
+
+# 予測（models\latest の model.pkl / feature_pipeline.pkl を使用）
+python scripts\predict_one_race.py --live-csv data\live\raw_20250907_19_12.csv --model-dir models\latest
+
+```
+---
+## 🕒 別途：直前オッズ収集フロー
+- タイムライン生成
 
 未確定レースの締切予定時刻を取得して CSV を生成します。
 
@@ -116,7 +162,7 @@ python scripts/build_timeline_live.py --date 20250901
 
 👉 `data/timeline/20250901_timeline_live.csv` が生成されます。
 
-### 4. スケジューラで直前オッズを収集
+- スケジューラで直前オッズを収集
 
 👉 締切5分前に scrape_odds.py が実行され、準優進出戦・準優勝戦・優勝戦のオッズを保存します。
 
@@ -124,32 +170,7 @@ python scripts/build_timeline_live.py --date 20250901
 python scripts/run_odds_scheduler.py --timeline data/timeline/20250901_timeline_live.csv
 ```
 
-### 5. 前処理
 
-JupyterLab で以下を実行し、`data/processed/master.csv` を生成します:
-```powershell
-notebooks/preprocess.ipynb
-```
-
-### 6. 特徴量生成
-
-JupyterLab で以下を実行し、成果物を保存します:
-```powershell
-notebooks/features.ipynb
-```
-出力:
-* `data/processed/X.npz`, `y.csv`, `ids.csv`
-* `models/latest/feature_pipeline.pkl`
-
-### 7. 学習
-
-スクリプトで学習を実行します:
-```powershell
-python scripts/train.py
-```
-出力:
-* `models/latest/model.pkl`
-* `models/latest/train_meta.json`
 ---
 
 ## 🔮 今後の予定
@@ -167,5 +188,6 @@ python scripts/train.py
 * 必要なライブラリは requirements.txt に記載予定
 * 大容量データは Git 管理せず data/ 以下に直接保存
 * ログは logs/ 以下に保存（.gitignore 済み）
+
 
 
