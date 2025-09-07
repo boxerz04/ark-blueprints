@@ -1,22 +1,22 @@
 {
-  "model_id": "20250907-232154-633fa0",
-  "created_at": "2025-09-07 23:21:54",
+  "model_id": "20250906-010339-6a900d",
+  "created_at": "2025-09-06 01:03:39",
   "project_root": "C:\\Users\\user\\Desktop\\Git\\ark-blueprints",
-  "version_tag": "v1.0.2",
-  "notes": "日次CSV追加による更新",
+  "version_tag": "v1.0.1",
+  "notes": "日次CSV追加のみ：データ拡張版",
   "git_commit": "4599af9",
   "data": {
     "X_source": "data/processed/X(.npz or X_dense.npz)",
     "y_source": "C:\\Users\\user\\Desktop\\Git\\ark-blueprints\\data\\processed\\y.csv",
     "ids_source": "C:\\Users\\user\\Desktop\\Git\\ark-blueprints\\data\\processed\\ids.csv",
-    "n_rows": 11880,
+    "n_rows": 7740,
     "n_features": 92,
     "sparse": false
   },
   "pipeline": {
     "path": "feature_pipeline.pkl",
     "latest_src": "C:\\Users\\user\\Desktop\\Git\\ark-blueprints\\models\\latest\\feature_pipeline.pkl",
-    "sha256": "5996d7a0d4a70a2f3aed8c09c6cecda9a44a939bddba01f928525189cfbcc4dc"
+    "sha256": "6146767968c1157a0f3d01d0c271458b1d3a4e681544bf04b946c54d1848ead4"
   },
   "model": {
     "path": "model.pkl",
@@ -39,13 +39,13 @@
     "scipy": "1.13.1"
   },
   "eval": {
-    "n_train_rows": 9504,
-    "n_valid_rows": 2376,
-    "auc": 0.7645361442709927,
-    "pr_auc": 0.6275389718897485,
-    "logloss": 0.5638513169555259,
-    "accuracy": 0.7361111111111112,
-    "mcc": 0.36879027247505103,
-    "top2_hit": 0.9015151515151515
+    "n_train_rows": 6192,
+    "n_valid_rows": 1548,
+    "auc": 0.753459076978547,
+    "pr_auc": 0.6229227793993675,
+    "logloss": 0.618748394407254,
+    "accuracy": 0.725452196382429,
+    "mcc": 0.34036035091759353,
+    "top2_hit": 0.8992248062015504
   }
 }
