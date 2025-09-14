@@ -24,29 +24,27 @@ Ark Blueprints は、ボートレースのデータを **収集 → 前処理 �
 ```text
 ark-blueprints/
 │
-├─ data/
-│   ├─ html/
-│   │   ├─ odds3t/             # 3連単オッズHTML
-│   │   ├─ odds2tf/            # 2連単・2連複オッズHTML
-│   │   ├─ pay/                # 払戻ページHTML
-│   │   └─ raceresult/         # レース結果ページHTML
-│   ├─ raw/                    # 日次レースCSV（64列: 63 + section_id）
-│   ├─ refund/                 # 払戻金CSV
-│   ├─ timeline/               # 直前オッズのタイムラインCSV
-│   └─ processed/
-│       └─ features_cache/
-│           └─ top2pair/
-│               └─ <timestamp>/                # 例: 2025-09-13_10-30-00
-│                   ├─ top2pair_ids.csv
-│                   ├─ top2pair_y.csv
-│                   ├─ top2pair_X_dense.npz
-│                   └─ features.json           # feature_names を保持
+├─ data/                         # データ格納（.gitignore 推奨）
+│   ├─ html/                     # スクレイピング取得HTML
+│   │   ├─ odds3t/               # 3連単オッズHTML
+│   │   ├─ odds2tf/              # 2連単・2連複オッズHTML
+│   │   ├─ pay/                  # 払戻ページHTML
+│   │   └─ raceresult/           # レース結果ページHTML
+│   ├─ raw/                      # 日次レースCSV（64列: 63 + section_id）
+│   ├─ refund/                   # 払戻金CSV
+│   ├─ timeline/                 # 直前オッズタイムラインCSV
+│   └─ processed/                # 前処理・特徴量・ラベル等の成果物
+│       ├─ master.csv            # 全レース統合（基礎）
+│       ├─ X_base.npz / y.csv    # baseモデル用の特徴量・ラベル
+│       ├─ X_top2pair_dense.npz  # top2pairモデル用の特徴量
+│       ├─ y_top2pair.csv
+│       └─ ids_top2pair.csv
 │
 ├─ logs/
 │
 ├─ notebooks/
-│   ├─ preprocess.ipynb
-│   └─ features.ipynb
+│   ├─ preprocess.ipynb          # 前処理フロー検証
+│   └─ features.ipynb            # 特徴量検証
 │
 ├─ scripts/
 │   ├─ scrape.py
@@ -54,37 +52,40 @@ ark-blueprints/
 │   ├─ build_timeline_live.py
 │   ├─ run_odds_scheduler.py
 │   ├─ scrape_odds.py
-│   ├─ train.py                 # 汎用トレーニング（runs / latest を更新）
-│   ├─ build_live_row.py        # 推論用ライブ行生成
-│   ├─ predict_one_race.py      # 単発推論
-│   └─ train_top2pair.py        # Top2ペア方式の学習（下記 models に出力）
+│   ├─ build_feature_pipeline.py # baseモデル用 前処理器生成
+│   ├─ train.py                  # baseモデル学習（runs / latest 更新）
+│   ├─ build_live_row.py         # 推論用ライブ行生成
+│   ├─ predict_one_race.py       # 単発推論（baseモデル）
+│   ├─ build_top2pair_dataset.py # top2pair用 データセット生成
+│   ├─ train_top2pair.py         # top2pairモデル学習
+│   └─ predict_top2pair.py       # top2pairモデル推論
 │
 ├─ src/
 │   ├─ __init__.py
 │   ├─ data_loader.py
 │   ├─ feature_engineering.py
 │   ├─ model.py
+│   ├─ model_utils.py            # 共通: 保存・ロード・ID生成
 │   └─ utils.py
 │
 ├─ models/
-│   ├─ latest/
-│   │   ├─ model.pkl                     # （train.py 系の「現行採用版」）
-│   │   ├─ feature_pipeline.pkl
-│   │   └─ train_meta.json
+│   ├─ base/                     # baseモデル系
+│   │   ├─ latest/
+│   │   │   ├─ model.pkl
+│   │   │   ├─ feature_pipeline.pkl
+│   │   │   └─ train_meta.json
+│   │   └─ runs/
+│   │       └─ <model_id>/       # 例: 20250913_141256
+│   │           ├─ model.pkl
+│   │           ├─ feature_pipeline.pkl
+│   │           └─ train_meta.json
 │   │
-│   ├─ runs/
-│   │   └─ <model_id>/                   # 例: 20250913_141256
-│   │       ├─ model.pkl
-│   │       ├─ feature_pipeline.pkl
-│   │       └─ train_meta.json
-│   │
-│   └─ top2pair/                         # ←（見やすさ用に論理的にまとめる場合の棚）
-│       ├─ latest/                       # train_top2pair.py が毎回更新
+│   └─ top2pair/                 # top2ペア方式モデル
+│       ├─ latest/
 │       │   ├─ model.pkl
 │       │   └─ train_meta.json
-│       │
 │       └─ runs/
-│           └─ <model_id>/               # 例: 20250913_141256
+│           └─ <model_id>/
 │               ├─ model.pkl
 │               ├─ train_meta.json
 │               ├─ feature_importance.csv
@@ -103,11 +104,13 @@ ark-blueprints/
 
 ---
 
-## 🚀 使い方
+# baseモデルの使い方
+
+## 学習フロー
 
 ### 1. スクレイピング（HTML保存）
 
-```powershell
+```bash
 # 今日の日付を対象に処理
 python scripts/scrape.py
 
@@ -115,8 +118,6 @@ python scripts/scrape.py
 python scripts/scrape.py --date 2025-08-27
 python scripts/scrape.py --date 20250827
 ```
-
-👉取得データは `data/html/` 以下に保存されます。保存先フォルダが存在しない場合でも自動作成されます。
 
 ### 2. CSV生成（raw + refund）
 
@@ -152,7 +153,7 @@ python scripts/preprocess.py --raw-dir data/raw --out data/processed/master.csv 
 - `models/latest/feature_pipeline.pkl`
 
 
-### 5. 学習（モデル生成 + 評価指標記録）
+### 5-1. 学習（baseモデル生成 + 評価指標記録）
 
 ```powershell
 python scripts/train.py --version-tag v1.0.2 --notes "人間予想上位互換モデル"
@@ -165,19 +166,58 @@ python scripts/train.py --version-tag v1.0.2 --notes "人間予想上位互換�
 - `models/runs/<model_id>/train_meta.json`
 - `models/latest/` にもコピー
 
-### 6. 推論（1レース予測）
+# Top2ペア方式モデルの使い方
+
+## データセット生成
+
+`master.csv` から Top2ペア学習用データを作成します。
+
+```bash
+# デフォルトで data/processed/master.csv を読み込み
+# 成果物は data/processed/ に保存されます
+python scripts/build_top2pair_dataset.py
+```
+👉 出力:
+
+- `data/processed/X_top2pair_dense.npz`
+- `data/processed/y_top2pair.csv`
+- `data/processed/ids.csv`
+- `data/processed/features_top2pair.json`
+
+### 5-2. 学習（Top2ペアモデル生成 + 評価指標記録）
 
 ```powershell
-# 事前に公式HTMLを取得して保存
-python scripts\scrape_one_race.py --date 20250907 --jcd 19 --race 12
-
-# ライブ用の “raw相当(6行)” を生成（--online で必要HTMLを自動取得＆cache）
-python scripts\build_live_row.py --date 20250907 --jcd 19 --race 12 --online --out data\live\raw_20250907_19_12.csv
-
-# 予測（models\latest の model.pkl / feature_pipeline.pkl を使用）
-python scripts\predict_one_race.py --live-csv data\live\raw_20250907_19_12.csv --model-dir models\latest
-
+python scripts/train_top2pair.py --version-tag v1.0.0 --notes "初回CV学習"
 ```
+👉 出力:
+
+- `models/top2pair/runs/<model_id>/model.pkl`
+- `models/top2pair/runs/<model_id>/train_meta.json`
+- `models/top2pair/runs/<model_id>/feature_importance.csv`
+- `models/top2pair/runs/<model_id>/cv_folds.csv`
+- `models/top2pair/latest/` にもコピー
+
+# 推論フロー（1レース予測）
+
+## 1) 1レースをスクレイピング（live/html に保存）
+```powershell
+python scripts\scrape_one_race.py --date 20250913 --jcd 12 --race 12
+```
+※ 取得HTMLは data/live/html/<kind>/... に .bin で保存され、raceresult は保存しません。
+## 2) ライブ6行CSVの生成（直前で取得したHTMLをそのまま利用）
+```powershell
+python scripts\build_live_row.py --date 20250913 --jcd 12 --race 12 --out data\live\raw_20250913_12_12.csv
+```
+※ヒント：ここで --online は不要です（手順1のHTMLキャッシュを使います）。必要なら --online でも可。
+## 3) Base モデルで単発推論（models/base/latest を使用）
+```powershell
+python scripts\predict_one_race.py --live-csv data\live\raw_20250913_12_12.csv --model-dir models\base\latest
+```
+## 4) Top2ペア モデルでペア推論（models/top2pair/latest を使用）
+```powershell
+python scripts\predict_top2pair.py --mode live --master data\live\raw_20250913_12_12.csv --race-id 202509131212
+```
+
 ---
 ## 🕒 別途：直前オッズ収集フロー
 - タイムライン生成
@@ -216,6 +256,7 @@ python scripts/run_odds_scheduler.py --timeline data/timeline/20250901_timeline_
 * 必要なライブラリは requirements.txt に記載予定
 * 大容量データは Git 管理せず data/ 以下に直接保存
 * ログは logs/ 以下に保存（.gitignore 済み）
+
 
 
 
