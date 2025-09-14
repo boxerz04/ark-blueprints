@@ -1,268 +1,214 @@
-# scripts/predict_top2pair.py
 # -*- coding: utf-8 -*-
 """
-Top2ペア方式 推論スクリプト（live推論に最適化）
-- 既定の保存先: data/live/top2pair/pred_YYYYMMDD_JCD_RR.csv
-- コンソール出力: 保存メッセージ + 上位ペアTOP10 + 枠番別Top2含有率
+scripts/predict_top2pair.py（旧ロジック準拠 + 表形式のコンソール出力）
 
-モード:
-  A) cache: features_cache から推論（学習時の features.json と同順）
-  B) live : master.csv(=6行CSVでもOK) + race_id 指定でオンザフライ生成
+- 入力（--mode live 前提）:
+    --master : build_live_row.py の 6行raw CSV
+    --race-id: レースID（YYYYMMDDJJRR 等）
+- モデル:
+    models/top2pair/latest/model.pkl（--model で上書き可）
+    data/processed/features_top2pair.json（--features で上書き可）
+- 出力:
+    data/live/top2pair/pred_YYYYMMDD_JCD_RR.csv（UTF-8 SIG）
+    列: race_id, wakuban_i, wakuban_j, player_i, player_j, score, softmax, p_top2set
+
+- コンソール:
+    [TOPK pairs by p_top2set] テーブル
+    [Lane include probability (sum of pair probs containing lane)] テーブル
 """
 
 import argparse
-import json
-import os
-import re
 import sys
 from pathlib import Path
-import joblib
+import json
 import numpy as np
 import pandas as pd
+from pandas.api.types import is_numeric_dtype
+from lightgbm import LGBMClassifier
+import joblib
 
-# ===== 学習時のルール（build_top2pair_dataset.py と合わせる） =====
+# --- プロジェクトルートを sys.path に追加 ---
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+# === 学習時と揃える定数 ===
+RACE_KEY = "race_id"
 LEAK_COLS = {
-    "entry","is_wakunari","rank","winning_trick",
-    "remarks","henkan_ticket","ST","ST_rank","__source_file",
-    "is_top2",
+    "is_top2", "rank", "winning_trick", "remarks",
+    "henkan_ticket", "ST", "ST_rank", "__source_file",
+    "entry", "is_wakunari",
 }
-ID_BASE_COLS = {
-    "race_id","player","player_id","motor_number","boat_number",
-    "section_id","wakuban","code","R"
+ID_COLS_BASE = {
+    "race_id", "section_id", "date", "code", "R", "place",
+    "player", "player_id", "motor_number", "boat_number", "wakuban",
 }
-ENV_SHARED_COLS = ["temperature","wind_speed","water_temperature","wave_height"]
-
-PAIR_NUMERIC_CANDIDATES = [
-    "age","weight","ST_tenji","time_tenji","wakuban",
-    "N_winning_rate","N_2rentai_rate","N_3rentai_rate",
-    "LC_winning_rate","LC_2rentai_rate","LC_3rentai_rate",
-    "motor_2rentai_rate","motor_3rentai_rate",
-    "boat_2rentai_rate","boat_3rentai_rate",
-    "ST_mean","entry_tenji","day","run_once","Tilt","F","L",
-]
-
-META_KEEP_I = ["race_id","date","place","race_grade","race_type","race_attribute",
-               "weather","wind_direction","section_id","R","code",
-               "day","section","timetable","wakuban","player_id"]
-META_KEEP_J = ["wakuban","player_id"]
+SHARED_NUMERIC_CANDS = ["temperature", "wind_speed", "water_temperature", "wave_height"]
 
 
-def racewise_softmax(ids: pd.DataFrame, raw_scores: np.ndarray) -> np.ndarray:
-    """レース内(=同一race_idの15行)でsoftmax正規化"""
-    probs = np.zeros_like(raw_scores, dtype=np.float64)
-    tmp = pd.DataFrame({"race_id": ids["race_id"].values, "score": raw_scores})
-    for _, idx in tmp.groupby("race_id").indices.items():
-        s = tmp.iloc[idx]["score"].to_numpy()
-        e = np.exp(s - s.max())
-        probs[idx] = e / e.sum()
-    return probs
+def build_pairs(df: pd.DataFrame) -> pd.DataFrame:
+    """6艇→15ペア（i<j）"""
+    if "wakuban" not in df.columns:
+        raise KeyError("入力CSVに 'wakuban' がありません")
+    df = df.copy()
+    df["wakuban"] = pd.to_numeric(df["wakuban"], errors="coerce").astype("Int64")
+    if df["wakuban"].isna().any():
+        raise ValueError("wakuban に数値化できない値があります")
 
-
-# ---------- ユーティリティ（保存先の既定推論） ----------
-def _infer_pred_path(master_path: Path, race_id: str, explicit_out: str | None) -> Path:
-    if explicit_out:
-        p = Path(explicit_out)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        return p
-    # live の raw 形式ファイル名: raw_YYYYMMDD_JCD_RR.csv を優先採用
-    name = master_path.name
-    m = re.match(r"^raw_(\d{8})_(\d{2})_(\d{2})\.csv$", name)
-    if m:
-        out_dir = master_path.parent / "top2pair"
-        out_dir.mkdir(parents=True, exist_ok=True)
-        return out_dir / f"pred_{m.group(1)}_{m.group(2)}_{m.group(3)}.csv"
-    # それ以外: race_id から日付/JCD/R を切り出し（保険）
-    m2 = re.match(r"^(\d{8})(\d{2})(\d{2})$", str(race_id))
-    out_dir = master_path.parent / "top2pair"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    if m2:
-        return out_dir / f"pred_{m2.group(1)}_{m2.group(2)}_{m2.group(3)}.csv"
-    return out_dir / f"pred_{race_id}.csv"
-
-
-def _print_console_summary(out_df: pd.DataFrame):
-    # 上位10ペア
-    top = out_df.sort_values("p_top2set", ascending=False).head(10)
-    print("\n[TOP10 pairs by p_top2set]")
-    with pd.option_context("display.max_columns", None):
-        print(top.to_string(index=False))
-
-    # 枠番ごとの Top2含有率（各ペア確率を “その枠を含む” すべてで合計）
-    lanes = sorted(pd.unique(pd.concat([out_df["i"], out_df["j"]]).astype(int)))
-    contain = {k: 0.0 for k in lanes}
-    for _, r in out_df.iterrows():
-        contain[int(r["i"])] += float(r["p_top2set"])
-        contain[int(r["j"])] += float(r["p_top2set"])
-    lane_df = pd.DataFrame({"wakuban": list(contain.keys()),
-                            "contain_top2_prob": [contain[k] for k in contain]})
-    lane_df = lane_df.sort_values(["contain_top2_prob","wakuban"], ascending=[False,True])
-    print("\n[Lane include probability (sum of pair probs containing lane)]")
-    print(lane_df.to_string(index=False))
-
-    # 合計チェック
-    s = out_df["p_top2set"].sum()
-    print(f"\n[check] sum of pair probs (should be ~1.0 per race): {s:.6f}")
-
-
-# ---------- Cacheモード: features_cache をそのまま使う ----------
-def predict_from_cache(cache_dir: str, model_path: str) -> pd.DataFrame:
-    ids = pd.read_csv(os.path.join(cache_dir, "top2pair_ids.csv"))
-    X = np.load(os.path.join(cache_dir, "top2pair_X_dense.npz"))["X"].astype(np.float32)
-    with open(os.path.join(cache_dir, "features.json"), "r", encoding="utf-8") as f:
-        feat_cache = json.load(f)["feature_names"]
-    model = joblib.load(model_path)
-    meta_path_guess = model_path.replace("model.pkl", "train_meta.json")
-    if os.path.exists(meta_path_guess):
-        with open(meta_path_guess, "r", encoding="utf-8") as f:
-            meta = json.load(f)
-        feat_model = meta.get("features", feat_cache)
+    L, R = df.add_suffix("_i"), df.add_suffix("_j")
+    if RACE_KEY in df.columns:
+        pairs = L.merge(R, left_on=f"{RACE_KEY}_i", right_on=f"{RACE_KEY}_j", how="inner")
     else:
-        feat_model = feat_cache
-    if feat_cache != feat_model:
-        raise SystemExit("[ERR] features.json と学習時の features が一致しません。")
-    raw = model.predict(X, raw_score=True)
-    p = racewise_softmax(ids, raw)
-    out = ids[["race_id","wakuban","wakuban_j"]].copy()
-    out["p_top2set"] = p
-    out = out.rename(columns={"wakuban":"i", "wakuban_j":"j"})
-    return out
+        pairs = L.merge(R, how="cross")
+
+    pairs = pairs[pairs["wakuban_i"] < pairs["wakuban_j"]].reset_index(drop=True)
+    return pairs
 
 
-# ---------- Liveモード: master.csv → 指定 race_id でペア生成 ----------
-def _load_master(path: str) -> pd.DataFrame:
-    if not os.path.exists(path):
-        raise SystemExit(f"[ERR] master not found: {path}")
-    df = pd.read_csv(path, parse_dates=["date"])
-    # entry が0/1なら >0 でフィルタ、1..6（枠番）ならスキップ
-    if "entry" in df.columns:
-        vals = pd.to_numeric(df["entry"], errors="coerce").dropna().unique()
-        if len(vals) > 0:
-            vmin, vmax = float(np.min(vals)), float(np.max(vals))
-            if vmin >= 0.0 and vmax <= 1.0:
-                df = df[df["entry"] > 0].copy()
-    return df
-
-
-def _pairs_for_race(df: pd.DataFrame, race_id: str) -> (pd.DataFrame, pd.DataFrame):
-    sub = df[df["race_id"].astype(str) == str(race_id)].copy()
-    if len(sub) != 6:
-        raise SystemExit(f"[ERR] race_id={race_id} の行数が {len(sub)} 行です（6行必要）")
-    sub = sub.sort_values("wakuban").reset_index(drop=True)
-    left, right = sub.add_suffix("_i"), sub.add_suffix("_j")
-    pairs = left.merge(right, how="inner", left_on="race_id_i", right_on="race_id_j")
-    pairs = pairs[pairs["wakuban_i"] < pairs["wakuban_j"]].copy()
-    keep_i = [f"{c}_i" for c in META_KEEP_I if f"{c}_i" in pairs.columns]
-    keep_j = [f"{c}_j" for c in META_KEEP_J if f"{c}_j" in pairs.columns]
-    ids = pairs[keep_i + keep_j].copy()
-    ren = {f"{c}_i": c for c in META_KEEP_I if f"{c}_i" in ids.columns}
-    ren.update({f"{c}_j": f"{c}_j" for c in META_KEEP_J if f"{c}_j" in ids.columns})
-    ids = ids.rename(columns=ren)
-    return pairs, ids
-
-
-def _choose_numeric_bases(pairs: pd.DataFrame) -> list:
-    BAN = set(LEAK_COLS) | set(ID_BASE_COLS) | set(ENV_SHARED_COLS)
+def select_numeric_bases(pairs: pd.DataFrame) -> list[str]:
+    """_i/_j 両方が数値で、リーク/ID以外のベース列を抽出"""
     bases = []
-    for c in PAIR_NUMERIC_CANDIDATES:
-        if c in BAN: continue
-        if f"{c}_i" in pairs.columns and f"{c}_j" in pairs.columns:
-            if pd.api.types.is_numeric_dtype(pairs[f"{c}_i"]) and pd.api.types.is_numeric_dtype(pairs[f"{c}_j"]):
-                bases.append(c)
-    for base in set(c[:-2] for c in pairs.columns if c.endswith("_i")):
-        if base in BAN: continue
+    for col in pairs.columns:
+        if not col.endswith("_i"):
+            continue
+        base = col[:-2]
+        if base in LEAK_COLS or base in ID_COLS_BASE:
+            continue
         ci, cj = f"{base}_i", f"{base}_j"
-        if ci in pairs.columns and cj in pairs.columns:
-            if pd.api.types.is_numeric_dtype(pairs[ci]) and pd.api.types.is_numeric_dtype(pairs[cj]):
-                if base not in bases:
-                    bases.append(base)
-    return bases
+        if cj not in pairs.columns:
+            continue
+        if is_numeric_dtype(pairs[ci]) and is_numeric_dtype(pairs[cj]):
+            bases.append(base)
+    return sorted(set(bases))
 
 
-def _build_pair_features(pairs: pd.DataFrame, bases: list) -> (pd.DataFrame, list):
-    cols = {}; feats = []
-    for c in bases:
-        ci, cj = f"{c}_i", f"{c}_j"
-        v_i = pairs[ci].astype("float64").to_numpy()
-        v_j = pairs[cj].astype("float64").to_numpy()
-        cols[f"{c}__mean"]  = (v_i + v_j)/2
-        cols[f"{c}__diff"]  = v_i - v_j
-        cols[f"{c}__adiff"] = np.abs(v_i - v_j)
-        feats += [f"{c}__mean", f"{c}__diff", f"{c}__adiff"]
-    for c in ENV_SHARED_COLS:
-        if f"{c}_i" in pairs.columns:
-            cols[f"{c}__shared"] = pairs[f"{c}_i"].astype("float64").to_numpy()
-            feats.append(f"{c}__shared")
-    X = pd.DataFrame(cols)
-    return X, feats
+def build_features_live(pairs: pd.DataFrame, feature_list: list[str]) -> pd.DataFrame:
+    """学習時 features に列順を合わせ、足りない列は0埋め、余剰列は捨てる"""
+    feats = {}
+    order = []
+
+    # 共有数値（存在するもののみ）
+    for s in SHARED_NUMERIC_CANDS:
+        ci = f"{s}_i"
+        if ci in pairs.columns and is_numeric_dtype(pairs[ci]):
+            name = f"shared_{s}"
+            feats[name] = pairs[ci].to_numpy(dtype="float32")
+            order.append(name)
+
+    # mean / diff / |diff|
+    for base in select_numeric_bases(pairs):
+        ai = pairs[f"{base}_i"].to_numpy(dtype="float32")
+        aj = pairs[f"{base}_j"].to_numpy(dtype="float32")
+        feats[f"{base}_mean"]  = (ai + aj) * 0.5
+        feats[f"{base}_diff"]  = ai - aj
+        feats[f"{base}_adiff"] = np.abs(ai - aj)
+        order.extend([f"{base}_mean", f"{base}_diff", f"{base}_adiff"])
+
+    Xdf = pd.DataFrame({k: feats[k] for k in order})
+
+    # 列合わせ
+    for col in feature_list:
+        if col not in Xdf.columns:
+            Xdf[col] = 0.0
+    Xdf = Xdf[feature_list]
+    return Xdf
 
 
-def predict_live(master_csv: str, model_path: str, race_id: str) -> pd.DataFrame:
-    model = joblib.load(model_path)
-    meta_path_guess = model_path.replace("model.pkl", "train_meta.json")
-    if not os.path.exists(meta_path_guess):
-        raise SystemExit("[ERR] train_meta.json が見つかりません。モデルと同じフォルダに置いてください。")
-    with open(meta_path_guess, "r", encoding="utf-8") as f:
-        meta = json.load(f)
-    feat_model = meta.get("features", [])
-    if not feat_model:
-        raise SystemExit("[ERR] train_meta.json に features がありません。")
-
-    df = _load_master(master_csv)
-    pairs, ids = _pairs_for_race(df, race_id)
-    bases = _choose_numeric_bases(pairs)
-    X_df, feat_live = _build_pair_features(pairs, bases)
-
-    # 列合わせ（モデルの features 並び）
-    for fcol in feat_model:
-        if fcol not in X_df.columns:
-            X_df[fcol] = 0.0
-    X_df = X_df[feat_model]
-
-    raw = model.predict(X_df.to_numpy(dtype=np.float32), raw_score=True)
-    p = racewise_softmax(ids, raw)
-
-    out = ids[["race_id","wakuban","wakuban_j"]].copy()
-    out["p_top2set"] = p
-    out = out.rename(columns={"wakuban":"i", "wakuban_j":"j"})
-    return out
+def infer_out_path(master_path: Path, out_dir: Path, race_id: str) -> Path:
+    """raw_YYYYMMDD_JCD_RR.csv → pred_YYYYMMDD_JCD_RR.csv（拡張子必須）"""
+    stem = master_path.stem
+    if stem.startswith("raw_"):
+        name = "pred_" + stem[4:] + ".csv"
+    else:
+        name = f"pred_top2pair_{race_id}.csv"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    return out_dir / name
 
 
-# ---------- CLI ----------
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", choices=["cache","live"], default="live")
-    ap.add_argument("--cache-dir", help="cacheモード: features_cache/top2pair/<timestamp>")
-    ap.add_argument("--master", help="liveモード: data/live/raw_YYYYMMDD_JCD_RR.csv など")
-    ap.add_argument("--race-id", help="liveモード: 推論したい race_id（YYYYMMDD+JCD2+R2）")
-    ap.add_argument("--model", required=True, help="学習済みモデル pkl（latest でも runs でも可）")
-    ap.add_argument("--out", help="出力CSVパス（省略時は data/live/top2pair/pred_YYYYMMDD_JCD_RR.csv）")
+    ap.add_argument("--mode", choices=["live"], default="live")
+    ap.add_argument("--master", required=True, help="6行raw CSV（build_live_row.pyの出力）")
+    ap.add_argument("--race-id", required=True, help="レースID（YYYYMMDDJJRR 等）")
+    ap.add_argument("--model", default="", help="モデルパス（未指定: models/top2pair/latest/model.pkl）")
+    ap.add_argument("--features", default=str(PROJECT_ROOT / "data" / "processed" / "features_top2pair.json"))
+    ap.add_argument("--out-dir", default=str(PROJECT_ROOT / "data" / "live" / "top2pair"))
+    ap.add_argument("--topk", type=int, default=10, help="コンソールに表示する上位ペア数")
     args = ap.parse_args()
 
-    if args.mode == "cache":
-        if not args.cache_dir:
-            raise SystemExit("--cache-dir が必要です")
-        out_df = predict_from_cache(args.cache_dir, args.model)
-        # 保存先を決める（cacheでも先頭のrace_idで命名）
-        first_race = str(out_df["race_id"].iloc[0]) if not out_df.empty else "unknown"
-        pred_path = _infer_pred_path(Path(args.cache_dir), first_race, args.out)
-    else:
-        if not (args.master and args.race_id):
-            raise SystemExit("--master と --race-id が必要です")
-        out_df = predict_live(args.master, args.model, args.race_id)
-        pred_path = _infer_pred_path(Path(args.master), args.race_id, args.out)
+    PR = PROJECT_ROOT
+    master_path = Path(args.master)
+    race_id = str(args.race_id)
 
-    # 保存（UTF-8-SIG、現行 predict_one_race.py と同様の運用）:
-    out_df.to_csv(pred_path, index=False, encoding="utf_8_sig")
-    print(f"[OK] saved: {pred_path}  (rows={len(out_df)}, cols={len(out_df.columns)})")
+    # 1) モデル
+    model_path = Path(args.model) if args.model else (PR / "models" / "top2pair" / "latest" / "model.pkl")
+    print("[INFO] Loading model from", model_path)
+    model: LGBMClassifier = joblib.load(model_path)
 
-    # コンソール要約（既存 predict_one_race.py と同じく出力を表示）:
-    #   → 保存メッセージ＋表を出す挙動は現行と整合。:contentReference[oaicite:1]{index=1}
-    _print_console_summary(out_df)
+    # 2) 学習時 features
+    feature_list = json.loads(Path(args.features).read_text(encoding="utf-8"))
+    if not isinstance(feature_list, list) or not feature_list:
+        raise ValueError("features_top2pair.json が不正です")
+
+    # 3) 入力CSV（6行）
+    df = pd.read_csv(master_path, encoding="utf-8-sig")
+    if RACE_KEY not in df.columns:
+        df[RACE_KEY] = race_id
+
+    # 4) ペア化 & 特徴
+    pairs = build_pairs(df)
+    Xdf = build_features_live(pairs, feature_list)
+    X = Xdf.to_numpy(dtype=np.float32)
+
+    # 5) 予測（確率）
+    proba = model.predict_proba(X)[:, 1]
+    exp = np.exp(proba - proba.max())
+    softmax = exp / exp.sum()  # 15ペアで正規化（合計1）
+
+    # 6) CSV保存（旧版互換の p_top2set を含める）
+    out = pd.DataFrame({
+        "race_id": pairs.get(f"{RACE_KEY}_i", pd.Series([race_id]*len(pairs))),
+        "wakuban_i": pairs["wakuban_i"].astype(int),
+        "wakuban_j": pairs["wakuban_j"].astype(int),
+        "player_i": pairs.get("player_i", pd.Series([""]*len(pairs))),
+        "player_j": pairs.get("player_j", pd.Series([""]*len(pairs))),
+        "score": proba,
+        "softmax": softmax,
+        "p_top2set": softmax,
+    })
+    out_path = infer_out_path(master_path, Path(args.out_dir), race_id)
+    out.to_csv(out_path, index=False, encoding="utf-8-sig")
+    print("[OK] saved:", out_path)
+
+    # 7) コンソール出力：TopK 表
+    K = max(1, args.topk)
+    topk_df = (
+        out.sort_values("p_top2set", ascending=False)
+           .head(K)
+           .loc[:, ["race_id", "wakuban_i", "wakuban_j", "p_top2set"]]
+           .rename(columns={"wakuban_i": "i", "wakuban_j": "j"})
+    )
+    print("\n[TOP{} pairs by p_top2set]".format(K))
+    # 小数6桁表示
+    fmt = {"p_top2set": lambda v: f"{v:.6f}"}
+    print(topk_df.to_string(index=False, formatters=fmt))
+
+    # 8) コンソール出力：Lane include probability
+    lane_probs = (
+        pd.concat([
+            out[["wakuban_i", "p_top2set"]].rename(columns={"wakuban_i": "wakuban"}),
+            out[["wakuban_j", "p_top2set"]].rename(columns={"wakuban_j": "wakuban"}),
+        ], ignore_index=True)
+        .groupby("wakuban", as_index=False)["p_top2set"].sum()
+        .rename(columns={"p_top2set": "contain_top2_prob"})
+        .sort_values("contain_top2_prob", ascending=False)
+    )
+    # 表示整形
+    lane_probs["wakuban"] = lane_probs["wakuban"].astype(int)
+    fmt2 = {"contain_top2_prob": lambda v: f"{v:.6f}"}
+    print("\n[Lane include probability (sum of pair probs containing lane)]")
+    print(lane_probs.to_string(index=False, formatters=fmt2))
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        print("[ERR]", repr(e), file=sys.stderr)
-        sys.exit(1)
+    main()

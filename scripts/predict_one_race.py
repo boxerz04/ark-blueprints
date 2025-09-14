@@ -1,160 +1,104 @@
-# -*- coding: utf-8 -*-
-"""
-scripts/predict_one_race.py
-- build_live_row.py が出力した live CSV（6行）を読み込み
-- 保存済みの特徴量パイプライン（feature_pipeline.pkl）で transform
-- 学習済みモデル（model.pkl）で推論し、CSV保存
-
-※ 互換性シム:
-  feature_pipeline.pkl を作成した際の FunctionTransformer が
-  __main__.add_st_features を参照しているため、
-  同一シグネチャの関数をこのスクリプト内に定義して pickle の参照を解決します。
-"""
+# scripts/predict_one_race.py
+# ----------------------------------------------------
+# 単一レース（live_csv）を入力し、指定モデル系列（approach）の最新モデルで予測。
+#
+# 入力:
+#   --live-csv         レース1件分の特徴量CSV（6行など）
+#   --approach         使用するモデル系列（例: base, top2pair）
+#   --model            モデル pkl を明示指定（未指定なら models/<approach>/latest/model.pkl）
+#   --feature-pipeline 特徴量パイプライン pkl を明示指定（通常不要）
+#   --id-cols          出力に含めるID列（デフォ: race_id,code,R,wakuban,player）
+#   --quiet            進捗と要約の表示を抑止
+#
+# 出力:
+#   data/live/base/pred_<approach>_<入力ファイル名>.csv（UTF-8-SIG）
+#   併せて確率降順のサマリ表をコンソール表示（--quiet で抑止）
+# ----------------------------------------------------
 
 import argparse
-import os
 import sys
 from pathlib import Path
-import re
-import numpy as np
-import pandas as pd
+
 import joblib
+import pandas as pd
 
-ROOT = Path(__file__).resolve().parents[1]
-
-# ====== 互換性シム（build_feature_pipeline.py と一致させる） ======
-def parse_st_value(x):
-    if x is None:
-        return np.nan
-    if isinstance(x, (int, float)):
-        try:
-            return float(x)
-        except Exception:
-            return np.nan
-    s = str(x).strip()
-    if s == "" or s in {"-", "—", "–", "NaN", "nan"}:
-        return np.nan
-    m = re.match(r"^([FL])\.(\d+)$", s, flags=re.IGNORECASE)
-    if m:
-        sign = -1.0 if m.group(1).upper() == "F" else 1.0
-        return sign * float("0." + m.group(2))
-    if re.match(r"^\.\d+$", s):
-        return float("0" + s)
-    try:
-        return float(s)
-    except Exception:
-        return np.nan
-
-def add_st_features(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-    if "ST_tenji" in out.columns:
-        out["ST_tenji"] = out["ST_tenji"].apply(parse_st_value).astype(float)
-        rank = pd.to_numeric(out["ST_tenji"], errors="coerce").rank(method="min", ascending=True)
-        out["ST_tenji_rank"] = rank.fillna(7).astype("Int64")
-    return out
-# ====== 互換性シムここまで ======
 
 def parse_args():
     p = argparse.ArgumentParser(description="Predict one race using feature pipeline + model.")
-    p.add_argument("--live-csv", required=True, help="build_live_row.py が出力した CSV（6行想定）")
-    p.add_argument("--model-dir", default=str(ROOT / "models" / "latest"),
-                   help="モデルと前処理器のディレクトリ（model.pkl / feature_pipeline.pkl を想定）")
-    p.add_argument("--model", help="モデル pkl のパス（省略時は <model-dir>/model.pkl）")
-    p.add_argument("--feature-pipeline", help="特徴量パイプライン pkl のパス（省略時は <model-dir>/feature_pipeline.pkl）")
-    p.add_argument("--out", help="出力CSV（省略時は pred_*.csv を live-csv と同じ場所に作成）")
+    p.add_argument("--live-csv", required=True, help="予測対象となる1レースの特徴量CSV")
+    p.add_argument("--approach", default="base",
+                   help="モデル系列（例: base, top2pair, ...）")
+    p.add_argument("--model", help="モデル pkl のパス（未指定: models/<approach>/latest/model.pkl）")
+    p.add_argument("--feature-pipeline", help="特徴量パイプライン pkl のパス（通常不要）")
     p.add_argument("--id-cols", default="race_id,code,R,wakuban,player",
-                   help="出力に含める識別系カラム（カンマ区切り）")
+                   help="出力に含めるID列（カンマ区切り）")
+    p.add_argument("--quiet", action="store_true", help="進捗と要約の表示を抑止")
     return p.parse_args()
 
-def infer_out_path(live_csv_path: Path) -> Path:
-    name = live_csv_path.name
-    if name.startswith("raw_"):
-        return live_csv_path.with_name("pred_" + name[len("raw_"):])
-    return live_csv_path.with_name("pred_" + name)
-
-def load_pipeline(path: Path):
-    if not path.exists():
-        print(f"[ERROR] feature pipeline not found: {path}", file=sys.stderr)
-        print("  -> build_feature_pipeline.py で feature_pipeline.pkl を作成してください。", file=sys.stderr)
-        sys.exit(1)
-    return joblib.load(path)
-
-def load_model(path: Path):
-    if not path.exists():
-        print(f"[ERROR] model not found: {path}", file=sys.stderr)
-        sys.exit(1)
-    return joblib.load(path)
 
 def main():
     args = parse_args()
 
-    live_csv = Path(args.live_csv)
-    if not live_csv.exists():
-        print(f"[ERROR] live csv not found: {live_csv}", file=sys.stderr)
-        sys.exit(1)
+    # 1) プロジェクトルート
+    ROOT = Path(__file__).resolve().parents[1]
 
-    model_dir = Path(args.model_dir)
-    model_path = Path(args.model) if args.model else (model_dir / "model.pkl")
-    pipe_path  = Path(args.feature_pipeline) if args.feature_pipeline else (model_dir / "feature_pipeline.pkl")
+    # 2) 入力読み込み
+    df_live = pd.read_csv(args.live_csv)
 
-    out_path = Path(args.out) if args.out else infer_out_path(live_csv)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+    # 3) モデル／パイプラインのパス
+    base_dir = ROOT / "models" / args.approach / "latest"
+    model_path = Path(args.model) if args.model else (base_dir / "model.pkl")
+    pipe_path = Path(args.feature_pipeline) if args.feature_pipeline else (base_dir / "feature_pipeline.pkl")
 
-    # 入力CSV
-    df_live = pd.read_csv(live_csv, encoding="utf_8_sig")
-    if len(df_live) != 6:
-        print(f"[WARN] live csv rows != 6 (got {len(df_live)}). 続行します。", file=sys.stderr)
+    # 4) 存在チェック
+    if not model_path.exists():
+        sys.exit(f"[ERROR] model not found: {model_path}")
+    if not pipe_path.exists():
+        sys.exit(f"[ERROR] feature_pipeline not found: {pipe_path}")
 
-    # 前処理器 & モデル
-    pipe = load_pipeline(pipe_path)
-    model = load_model(model_path)
+    # 5) ロード
+    if not args.quiet:
+        print(f"[INFO] Loading model from {model_path}")
+    model = joblib.load(model_path)
 
-    # 前処理（パイプライン側に集約）
-    try:
-        X_live = pipe.transform(df_live)
-    except Exception as e:
-        print(f"[ERROR] feature pipeline transform failed: {type(e).__name__}: {e}", file=sys.stderr)
-        print("  -> 学習時と同じ列名・dtype・前処理器かを確認してください。", file=sys.stderr)
-        sys.exit(1)
+    if not args.quiet:
+        print(f"[INFO] Loading feature pipeline from {pipe_path}")
+    pipeline = joblib.load(pipe_path)
 
-    # 推論
-    try:
-        y_pred = model.predict(X_live)
-    except Exception as e:
-        print(f"[ERROR] model.predict failed: {type(e).__name__}: {e}", file=sys.stderr)
-        sys.exit(1)
+    # 6) 特徴量変換
+    X_live = pipeline.transform(df_live)
 
-    # 確率が取れる分類器なら保存
-    proba_df = None
-    if hasattr(model, "predict_proba"):
-        try:
-            proba = model.predict_proba(X_live)
-            if proba.ndim == 2 and proba.shape[1] == 2:
-                proba_df = pd.DataFrame({"proba_1": proba[:, 1], "proba_0": proba[:, 0]})
-            elif proba.ndim == 2:
-                proba_df = pd.DataFrame(proba, columns=[f"proba_{i}" for i in range(proba.shape[1])])
-        except Exception:
-            proba_df = None
+    # 7) 予測確率
+    proba = model.predict_proba(X_live)[:, 1]
 
-    # 出力テーブル
-    id_cols = [c.strip() for c in args.id_cols.split(",") if c.strip() in df_live.columns]
-    out = pd.DataFrame(index=df_live.index)
-    for c in id_cols:
-        out[c] = df_live[c]
-    out["prediction"] = y_pred
-    if proba_df is not None:
-        out = pd.concat([out, proba_df], axis=1)
+    # 8) 出力データフレーム
+    id_cols = [c for c in args.id_cols.split(",") if c in df_live.columns]
+    out_df = df_live[id_cols].copy()
+    out_df["proba"] = proba
 
-    # 念のため主要キーがなければ補完
-    for k in ("race_id", "code", "R", "wakuban", "player"):
-        if k not in out.columns and k in df_live.columns:
-            out[k] = df_live[k]
+    # 9) 出力先（data/live/base に固定）＋ UTF-8-SIG
+    out_dir = Path("data") / "live" / "base"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    stem = Path(args.live_csv).stem  # 例: raw_20250913_12_12
+    out_path = out_dir / f"pred_{args.approach}_{stem}.csv"
+    out_df.to_csv(out_path, index=False, encoding="utf-8-sig")
 
-    out.to_csv(out_path, index=False, encoding="utf_8_sig")
-    print(f"[OK] saved: {out_path}  (rows={len(out)}, cols={len(out.columns)})")
+    if not args.quiet:
+        print(f"[OK] saved predictions: {out_path}")
 
-    with pd.option_context("display.max_columns", None):
-        print(out.to_string(index=False))
+        # ---- コンソール要約（確率降順）----
+        show_cols = [c for c in ["race_id", "code", "R", "wakuban", "player", "proba"] if c in out_df.columns]
+        summary = out_df.sort_values("proba", ascending=False)[show_cols].reset_index(drop=True)
+        with pd.option_context("display.max_rows", 50, "display.width", 120, "display.float_format", "{:,.4f}".format):
+            print("\n[SUMMARY] prob(desc):")
+            print(summary.to_string(index=False))
+
+        # 上位2艇の簡易表示
+        if "wakuban" in summary.columns:
+            top2 = summary.head(2)[["wakuban", "proba"]].to_records(index=False)
+            pair = " - ".join([f"{int(w)}({p:.3f})" for w, p in top2])
+            print(f"\n[TOP2] {pair}")
+
 
 if __name__ == "__main__":
     main()

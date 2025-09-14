@@ -6,15 +6,16 @@ scripts/build_feature_pipeline.py (features.ipynb 準拠 + ST派生の自動補�
   * used = df.drop(ID_COLS + LEAK_COLS + [TARGET])
   * used に ensure_st_features を適用（ST数値化＋ST_tenji_rank 生成（無い時のみ））
   * 数値 = すべて → StandardScaler()
-  * カテゴリ = SAFE_CAT + 低カーディナリティ(<=50)自動追加 → OneHotEncoder(handle_unknown='ignore', sparse_output=True)
+  * カテゴリ = SAFE_CAT + 低カーディナリティ(<=50)自動追加 → OneHotEncoder(handle_unknown='ignore', sparse_output=True or sparse=True)
   * 明示ドロップ = DROP_FEATS
   * remainder='drop'
-- パイプライン先頭に ensure_st_features を FunctionTransformer で入れて保存
+  * パイプライン先頭に ensure_st_features を FunctionTransformer で入れて保存
 """
 
 import argparse
 from pathlib import Path
 import sys
+import json
 import pandas as pd
 from pandas.api.types import is_numeric_dtype, is_object_dtype, is_string_dtype
 import joblib
@@ -24,14 +25,17 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler, FunctionTransfo
 from sklearn.compose import ColumnTransformer
 
 ROOT = Path(__file__).resolve().parents[1]
+
+# scripts/ark_features.py を import できるようにパス追加
 SCRIPTS_DIR = ROOT / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
-import ark_features  # scripts/ark_features.py
+import ark_features  # noqa: E402
 
 TARGET = "is_top2"
 ID_COLS   = ["race_id", "player", "player_id", "motor_number", "boat_number", "section_id"]
-LEAK_COLS = ["entry", "is_wakunari", "rank", "winning_trick", "remarks", "henkan_ticket", "ST", "ST_rank", "__source_file"]
+LEAK_COLS = ["entry", "is_wakunari", "rank", "winning_trick", "remarks",
+             "henkan_ticket", "ST", "ST_rank", "__source_file"]
 
 SAFE_CAT = [
     "AB_class","place","weather","wind_direction","sex",
@@ -47,14 +51,15 @@ DROP_FEATS = [
 def parse_args():
     ap = argparse.ArgumentParser()
     ap.add_argument("--processed-dir", default=str(ROOT / "data" / "processed"))
-    ap.add_argument("--out", default=str(ROOT / "models" / "latest" / "feature_pipeline.pkl"))
+    # ★ 出力デフォルトを models/base/latest に
+    ap.add_argument("--out", default=str(ROOT / "models" / "base" / "latest" / "feature_pipeline.pkl"))
     return ap.parse_args()
 
 def build_pipeline_from_master(master_csv: Path) -> Pipeline:
     df = pd.read_csv(master_csv, encoding="utf-8-sig", parse_dates=["date"])
     used = df.drop(columns=ID_COLS + LEAK_COLS + [TARGET], errors="ignore").copy()
 
-    # ST 数値化 ＋ ST_tenji_rank 生成（無い場合のみ）
+    # ST 数値化 ＋ ST_tenji_rank 生成（無い場合のみ）— idempotent
     used = ark_features.ensure_st_features(used)
 
     # 数値列
@@ -75,7 +80,16 @@ def build_pipeline_from_master(master_csv: Path) -> Pipeline:
     CAT_COLS = [c for c in CAT_COLS if c not in DROP_FEATS]
 
     num_tf = Pipeline(steps=[("scaler", StandardScaler())])
-    cat_tf = Pipeline(steps=[("ohe", OneHotEncoder(handle_unknown="ignore", sparse_output=True))])
+
+    # ★ scikit-learn 1.2+ / 1.1- 互換
+    try:
+        cat_tf = Pipeline(steps=[
+            ("ohe", OneHotEncoder(handle_unknown="ignore", sparse_output=True))  # 1.2+
+        ])
+    except TypeError:
+        cat_tf = Pipeline(steps=[
+            ("ohe", OneHotEncoder(handle_unknown="ignore", sparse=True))         # <=1.1
+        ])
 
     ct = ColumnTransformer(
         transformers=[
@@ -113,6 +127,16 @@ def main():
     pipe = build_pipeline_from_master(master_csv)
     joblib.dump(pipe, out_path)
     print(f"[OK] saved pipeline: {out_path}")
+
+    # 可能なら特徴名も保存（整合チェック用のおまけ）
+    try:
+        feat_names = pipe.get_feature_names_out()
+        feat_json = out_path.with_name("feature_names.json")
+        with open(feat_json, "w", encoding="utf-8") as f:
+            json.dump(list(map(str, feat_names)), f, ensure_ascii=False, indent=2)
+        print(f"[OK] saved feature names: {feat_json}")
+    except Exception:
+        pass
 
 if __name__ == "__main__":
     main()
