@@ -1,23 +1,29 @@
+# scripts/train_top2pair.py
 # -*- coding: utf-8 -*-
 """
-scripts/train_top2pair.py (train.py準拠の評価出力)
-- 入力（build_top2pair_dataset.py の成果物 / data/processed 固定）:
-    - data/processed/X_top2pair.npz  または  X_top2pair_dense.npz
-    - data/processed/y_top2pair.csv  （列名: y）
-    - data/processed/ids_top2pair.csv
-- 振る舞い:
-    - StratifiedKFold による CV 評価（foldごとに AUC/PR-AUC/LogLoss/Acc/MCC を表示）
-    - OOF（全体）でも AUC/PR-AUC/LogLoss を表示・保存
-    - 全データで最終学習 → アーティファクト保存（runs/<id> と latest/）
-- 出力:
-    models/top2pair/runs/<model_id>/
-        ├─ model.pkl
-        ├─ train_meta.json
-        ├─ feature_importance.csv
-        └─ cv_folds.csv
-    models/top2pair/latest/ にも同じ内容をコピー
+Top2ペア分類モデルの学習スクリプト（モデル別ディレクトリ対応版）
+
+入力（build_top2pair_dataset.py の成果物）:
+  data/processed/top2pair/
+    - X.npz           （必須。X_dense.npz も自動対応）
+    - y.csv           （列名 'y' を推奨／先頭列でも可）
+    - ids.csv
+
+出力:
+  models/top2pair/runs/<model_id>/
+    ├─ model.pkl
+    ├─ train_meta.json
+    ├─ feature_importance.csv
+    └─ cv_folds.csv
+  同一内容を models/top2pair/latest/ にもコピー
+
+使い方:
+  python scripts/train_top2pair.py
+  # or データ場所を変えたい場合
+  python scripts/train_top2pair.py --data-dir data/processed/top2pair
 """
 
+from __future__ import annotations
 import argparse
 import subprocess
 import sys
@@ -47,8 +53,8 @@ from src.model_utils import gen_model_id, save_artifacts
 
 
 # ---------- ユーティリティ ----------
-def load_X(DATA_DIR: Path, prefix="X_top2pair"):
-    """疎行列 or 密行列をロード"""
+def load_X(DATA_DIR: Path, prefix: str = "X"):
+    """疎行列 or 密行列をロード（X.npz / X_dense.npz の順で探す）"""
     xnpz = DATA_DIR / f"{prefix}.npz"
     if xnpz.exists():
         return load_npz(xnpz)
@@ -56,7 +62,14 @@ def load_X(DATA_DIR: Path, prefix="X_top2pair"):
     if xdens.exists():
         arr = np.load(xdens)
         return arr["X"]
-    raise FileNotFoundError(f"{prefix}.npz / {prefix}_dense.npz が見つかりません")
+    raise FileNotFoundError(f"{DATA_DIR} に {prefix}.npz / {prefix}_dense.npz が見つかりません")
+
+
+def load_y(y_path: Path) -> np.ndarray:
+    """y.csv の 1 列を int で返す（列名 y が無ければ先頭列を使う）"""
+    dfy = pd.read_csv(y_path)
+    col = "y" if "y" in dfy.columns else dfy.columns[0]
+    return dfy[col].to_numpy(dtype=int)
 
 
 def get_git_commit(repo_root: Path) -> str:
@@ -78,15 +91,15 @@ def main(args):
     approach = "top2pair"
 
     PR = PROJECT_ROOT
-    DATA_DIR = PR / "data" / "processed"
+    DATA_DIR = Path(args.data_dir) if args.data_dir else (PR / "data" / "processed" / approach)
 
     print("[INFO] PROJECT_ROOT:", PR)
-    print("[INFO] loading dataset ...")
+    print("[INFO] DATA_DIR:", DATA_DIR)
 
-    # 入力データ
-    X = load_X(DATA_DIR)
-    y = pd.read_csv(DATA_DIR / "y_top2pair.csv").iloc[:, 0].to_numpy(dtype=int)  # 列名は y を想定
-    ids = pd.read_csv(DATA_DIR / "ids_top2pair.csv", dtype=str)
+    # 入力読み込み
+    X = load_X(DATA_DIR, prefix="X")
+    y = load_y(DATA_DIR / "y.csv")
+    ids = pd.read_csv(DATA_DIR / "ids.csv", dtype=str)
 
     if y.shape[0] != X.shape[0] or len(ids) != X.shape[0]:
         raise RuntimeError(f"X, y, ids の行数が不一致: X={X.shape[0]} / y={y.shape[0]} / ids={len(ids)}")
@@ -130,7 +143,6 @@ def main(args):
         }
         metrics.append(fold_metrics)
 
-        # ログ出力（train.py 風）
         ll_txt = f"{fold_metrics['logloss']:.4f}" if fold_metrics["logloss"] is not None else "nan"
         print(
             f"[Fold {fold}] AUC={fold_metrics['auc']:.4f} "
@@ -140,7 +152,7 @@ def main(args):
             f"MCC={fold_metrics['mcc']:.4f}"
         )
 
-        # 特徴量重要度
+        # 特徴量重要度（gain）
         fi = pd.DataFrame({
             "feature": clf.booster_.feature_name(),
             f"importance_fold{fold}": clf.booster_.feature_importance(importance_type="gain"),
@@ -178,16 +190,16 @@ def main(args):
         "git_commit": get_git_commit(PR),
         "n_rows": int(X.shape[0]),
         "n_features": int(X.shape[1]),
-        "cv": metrics,      # 各foldの辞書
-        "oof": oof_metrics, # 全体OOF指標
+        "cv": metrics,
+        "oof": oof_metrics,
     }
 
-    # 副産物を保存（CSV）。列重複に注意して統合
+    # 副産物（CSV）
     fi_all = pd.concat(feature_importance, axis=1)
     fi_all = fi_all.loc[:, ~fi_all.columns.duplicated()]
     cv_df = pd.DataFrame(metrics)
 
-    # save_artifacts に渡す（ファイルパス or DataFrame/obj の混在OK設計ならこのまま）
+    # save_artifacts で保存（runs/<id> と latest/ に配置）
     artifacts = {
         "model.pkl": final_clf,
         "train_meta.json": meta,
@@ -195,12 +207,12 @@ def main(args):
         "cv_folds.csv": cv_df,
     }
     save_artifacts(approach, model_id, artifacts)
-
     print(f"[OK] saved {approach} model artifacts: {model_id}")
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
+    ap.add_argument("--data-dir", type=str, default="", help="データディレクトリ（既定: data/processed/top2pair）")
     ap.add_argument("--cv", type=int, default=5)
     ap.add_argument("--n-estimators", type=int, default=400)
     ap.add_argument("--learning-rate", type=float, default=0.05)

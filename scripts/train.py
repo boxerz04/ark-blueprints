@@ -1,28 +1,22 @@
 # scripts/train.py
 # --------------------------------------------
-# 入力（features.ipynb / build_feature_pipeline.py の成果物）:
-#   - data/processed/X.npz  (or X_dense.npz)
-#   - data/processed/y.csv
-#   - data/processed/ids.csv
-#   - models/base/latest/feature_pipeline.pkl
+# 入力（features_* の成果物）:
+#   - data/processed/{approach}/X.npz  (or X_dense.npz)
+#   - data/processed/{approach}/y.csv  （列名 'y' / 'is_top2' どちらでもOK）
+#   - data/processed/{approach}/ids.csv
+#   - models/{approach}/latest/feature_pipeline.pkl
 #
 # 出力:
-#   - models/base/runs/<model_id>/
-#       ├─ model.pkl
-#       ├─ feature_pipeline.pkl
-#       └─ train_meta.json
-#   - models/base/latest/
-#       ├─ model.pkl
-#       ├─ feature_pipeline.pkl
-#       └─ train_meta.json
+#   - models/{approach}/runs/<model_id>/{model.pkl, feature_pipeline.pkl, train_meta.json}
+#   - models/{approach}/latest/{model.pkl, feature_pipeline.pkl, train_meta.json}
 # --------------------------------------------
 
+from __future__ import annotations
 import argparse
 import hashlib
 import json
 import subprocess
 import sys
-import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -48,7 +42,6 @@ from src.model_utils import gen_model_id, save_artifacts
 
 
 # ---------- プロジェクトルート自動検出 ----------
-
 def find_project_root(start: Path) -> Path:
     for p in [start] + list(start.parents):
         if (p / "data").exists() and (p / "models").exists():
@@ -57,7 +50,6 @@ def find_project_root(start: Path) -> Path:
 
 
 # ---------- ユーティリティ ----------
-
 def file_sha256(path: Path) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -67,6 +59,7 @@ def file_sha256(path: Path) -> str:
 
 
 def load_X(DATA_DIR: Path):
+    """X.npz（疎） or X_dense.npz（密）を読み込む。"""
     xnpz = DATA_DIR / "X.npz"
     if xnpz.exists():
         return load_npz(xnpz)
@@ -74,7 +67,21 @@ def load_X(DATA_DIR: Path):
     if xdens.exists():
         arr = np.load(xdens)
         return arr["X"]
-    raise FileNotFoundError("X.npz も X_dense.npz も見つかりません")
+    raise FileNotFoundError(f"{DATA_DIR} に X.npz も X_dense.npz も見つかりません")
+
+
+def load_y(y_path: Path) -> np.ndarray:
+    """
+    y.csv を読み込む。列名は 'y' / 'is_top2' / 先頭列のいずれでもOKにする。
+    """
+    dfy = pd.read_csv(y_path)
+    if "y" in dfy.columns:
+        col = "y"
+    elif "is_top2" in dfy.columns:
+        col = "is_top2"
+    else:
+        col = dfy.columns[0]
+    return dfy[col].to_numpy(dtype=int)
 
 
 def assert_feature_dim_matches(pipeline, X) -> None:
@@ -103,6 +110,7 @@ def get_git_commit(repo_root: Path) -> str:
 
 
 def time_split_indices(ids_df: pd.DataFrame, ratio: float = 0.8):
+    """race_id の時間順（登場順）でホールドアウト分割。"""
     rid_order = ids_df["race_id"].astype(str).to_numpy()
     seen, uniq = set(), []
     for r in rid_order:
@@ -130,35 +138,35 @@ def topk_hit_per_race(proba_va, y_va, rid_va, k=2) -> float:
 
 
 # ---------- メイン ----------
-
 def main(args):
-    approach = "base"  # 親モデルは "base" に固定
+    approach = args.approach  # base / sectional / 他
 
-    # プロジェクトルート決定
+    # プロジェクトルート
     PR = Path(args.project_root).resolve() if args.project_root else find_project_root(Path(__file__).resolve())
     print("[INFO] PROJECT_ROOT:", PR)
 
-    DATA_DIR = PR / "data" / "processed"
+    # 参照パス（モデル別ディレクトリ）
+    DATA_DIR = PR / "data" / "processed" / approach
     PIPE_SRC = PR / "models" / approach / "latest" / "feature_pipeline.pkl"
 
     # 入力チェック
     y_path = DATA_DIR / "y.csv"
     ids_path = DATA_DIR / "ids.csv"
     if not y_path.exists() or not ids_path.exists() or not PIPE_SRC.exists():
-        raise FileNotFoundError("入力ファイルが不足しています")
+        raise FileNotFoundError(f"入力ファイルが不足しています: {DATA_DIR} / {PIPE_SRC}")
 
-    # データ読み込み
+    # 読み込み
     X = load_X(DATA_DIR)
-    y = pd.read_csv(y_path)["is_top2"].to_numpy(dtype=int)
+    y = load_y(y_path)
     ids = pd.read_csv(ids_path, dtype=str)
     pipeline = joblib.load(PIPE_SRC)
 
     if y.shape[0] != X.shape[0] or len(ids) != X.shape[0]:
-        raise RuntimeError("X, y, ids の行数が不一致")
+        raise RuntimeError("X, y, ids の行数が不一致です")
 
     assert_feature_dim_matches(pipeline, X)
 
-    # 評価（ホールドアウト）
+    # ホールドアウト評価
     tr_idx, va_idx, rid_va = time_split_indices(ids, ratio=0.8)
     eval_clf = LGBMClassifier(
         n_estimators=args.n_estimators,
@@ -183,7 +191,7 @@ def main(args):
     }
     print("[EVAL]", metrics_eval)
 
-    # 本番モデルを全データで学習
+    # 全データで再学習
     clf = LGBMClassifier(
         n_estimators=args.n_estimators,
         learning_rate=args.learning_rate,
@@ -208,18 +216,18 @@ def main(args):
         "sparse": bool(issparse(X)),
         "eval": metrics_eval,
     }
-
     artifacts = {
         "model.pkl": clf,
         "feature_pipeline.pkl": pipeline,
         "train_meta.json": meta,
     }
     save_artifacts(approach, model_id, artifacts)
-    print(f"[OK] saved base model artifacts: {model_id}")
+    print(f"[OK] saved {approach} model artifacts: {model_id}")
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
+    ap.add_argument("--approach", type=str, default="base", help="モデル名（base / sectional など）")
     ap.add_argument("--n-estimators", type=int, default=400)
     ap.add_argument("--learning-rate", type=float, default=0.05)
     ap.add_argument("--num-leaves", type=int, default=63)

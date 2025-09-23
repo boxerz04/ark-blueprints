@@ -30,6 +30,13 @@ import pandas as pd
 from bs4 import BeautifulSoup
 from io import StringIO
 import requests  # robust read_html のフォールバックで使用
+import warnings
+try:
+    from bs4.builder import XMLParsedAsHTMLWarning
+    warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
+except Exception:
+    pass
+
 
 # ================= ルート基準のパスヘルパ =================
 root_dir = os.path.dirname(os.path.dirname(__file__))

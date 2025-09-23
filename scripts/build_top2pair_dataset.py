@@ -1,13 +1,23 @@
+# scripts/build_top2pair_dataset.py
 # -*- coding: utf-8 -*-
 """
-scripts/build_top2pair_dataset.py
-- master.csv（1行=1艇）から、Top2ペア学習用のデータセットを生成
-- ラベルは master.csv の 'is_top2' を用いて、ペア両者が1なら1、それ以外は0
-- 出力は data/processed/ に固定:
-    - X_top2pair_dense.npz  （float32, dense）
-    - y_top2pair.csv        （列名 'y'）
-    - ids_top2pair.csv      （baseの ids.csv とは別に保存）
-    - features_top2pair.json（使用特徴名の記録・任意）
+Top2ペア学習用データセットを生成するスクリプト。
+
+入力:
+  - data/processed/master.csv（1行=1艇）
+
+処理概要:
+  - レース単位で自己結合し、i<j の 15 ペアを作成
+  - 特徴量: 数値カラムの mean/diff/|diff| を作成
+            共有数値（temperature, wind_speed, water_temperature, wave_height があれば）も追加
+  - ラベル: y = (is_top2_i==1) & (is_top2_j==1)
+
+出力（デフォルト）:
+  data/processed/top2pair/
+    - X.npz        （float32; dense もしくは疎→本スクリプトは dense）
+    - y.csv        （列名 'y'）
+    - ids.csv      （race_id, date, code, R, place, wakuban_i/j, player_id_i/j, player_i/j 等）
+    - features.json（使用特徴名の記録）
 """
 
 from pathlib import Path
@@ -17,8 +27,9 @@ import numpy as np
 import pandas as pd
 from pandas.api.types import is_numeric_dtype
 
-ROOT = Path(__file__).resolve().parents[1]
-DP   = ROOT / "data" / "processed"
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DP = PROJECT_ROOT / "data" / "processed"
+TOP2PAIR_DIR_DEFAULT = DP / "top2pair"
 
 # ----- 設定（必要ならここで微調整） -----
 REQUIRE_EXACT_SIX = True  # レースは6艇揃いのみ採用（True推奨）
@@ -41,11 +52,11 @@ SHARED_NUMERIC_CANDS = [
 ]
 
 def parse_args():
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(description="Build Top2-pair dataset from master.csv")
     ap.add_argument("--master", default=str(DP / "master.csv"),
                     help="入力 master.csv（デフォルト: data/processed/master.csv）")
-    ap.add_argument("--outdir", default=str(DP),
-                    help="出力先（デフォルト: data/processed）")
+    ap.add_argument("--outdir", default=str(TOP2PAIR_DIR_DEFAULT),
+                    help="出力先（デフォルト: data/processed/top2pair）")
     return ap.parse_args()
 
 def load_master(master_csv: Path) -> pd.DataFrame:
@@ -158,7 +169,7 @@ def build_features_and_labels(pairs: pd.DataFrame):
     # 行列化
     X = np.vstack([feats[name] for name in feat_names]).T.astype("float32")
 
-    # IDs（base用と衝突しないよう ids_top2pair.csv に出す）
+    # IDs（情報保持用）
     id_cols = []
     def add_if_exists(col):
         nonlocal id_cols
@@ -202,19 +213,19 @@ def main():
 
     # 保存
     outdir.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(outdir / "X_top2pair_dense.npz", X=X)
-    pd.DataFrame({"y": y}, dtype="int8").to_csv(outdir / "y_top2pair.csv", index=False, encoding="utf-8-sig")
-    ids_df.to_csv(outdir / "ids_top2pair.csv", index=False, encoding="utf-8-sig")
+    np.savez_compressed(outdir / "X.npz", X=X)
+    pd.DataFrame({"y": y}, dtype="int8").to_csv(outdir / "y.csv", index=False, encoding="utf-8-sig")
+    ids_df.to_csv(outdir / "ids.csv", index=False, encoding="utf-8-sig")
 
     # 使った特徴名も残す（整合チェック用）
-    with open(outdir / "features_top2pair.json", "w", encoding="utf-8") as f:
+    with open(outdir / "features.json", "w", encoding="utf-8") as f:
         json.dump(feat_names, f, ensure_ascii=False, indent=2)
 
     print(f"[OK] saved dataset to: {outdir}")
-    print(f" - X_top2pair_dense.npz  shape={X.shape}")
-    print(f" - y_top2pair.csv        n={len(y)}  pos={int(y.sum())} ({y.mean():.4f})")
-    print(f" - ids_top2pair.csv      shape={ids_df.shape}")
-    print(f" - features_top2pair.json ({len(feat_names)} feats)")
+    print(f" - X.npz   shape={X.shape}")
+    print(f" - y.csv   n={len(y)}  pos={int(y.sum())} ({y.mean():.4f})")
+    print(f" - ids.csv shape={ids_df.shape}")
+    print(f" - features.json ({len(feat_names)} feats)")
 
 if __name__ == "__main__":
     main()
