@@ -2,9 +2,14 @@
 # ----------------------------------------------------
 # 単一レース（live_csv）を入力し、指定モデル系列（approach）の最新モデルで予測。
 #
-# 特徴:
+# 追加: --approach ensemble
+#  - base と sectional を内部で推論し、src/ensemble/meta_features.py でメタ特徴を作成
+#  - models/ensemble/latest/meta_model.pkl を適用して最終確率を出力
+#  - 既存の base / sectional の挙動には影響なし（後方互換）
+#
+# 既存の特徴:
 # - live_csv（例: build_live_row.py が生成した 6行DataFrame）を入力
-# - モデル系列（--approach base / sectional ...）を切り替え可能
+# - モデル系列（--approach base / sectional / ensemble）を切り替え可能
 # - Adapter方式：モデルごとの追加処理を src/adapters/*.py に分離
 # - 既定では models/<approach>/latest/ の model.pkl / feature_pipeline.pkl を使用
 # - 出力は data/live/<approach>/pred_<approach>_<入力ファイル名>.csv
@@ -19,18 +24,23 @@ import argparse
 import sys
 from importlib import import_module
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 import joblib
 import pandas as pd
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 
-
 # ===== 重要：プロジェクトルートを sys.path に追加（src パッケージを確実に import するため）=====
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+# （new）メタ特徴ビルダ（スタッキング用）
+try:
+    from src.ensemble.meta_features import build_meta_features  # type: ignore
+except Exception:
+    build_meta_features = None  # ensemble未導入でも単体推論は動かせるようにする
 
 
 def parse_args() -> argparse.Namespace:
@@ -43,15 +53,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--approach",
         default="base",
-        help="モデル系列（例: base, sectional）",
+        help="モデル系列（base, sectional, ensemble）",
     )
     p.add_argument(
         "--model",
-        help="モデル pkl のパス（未指定時は models/<approach>/latest/model.pkl を使用）",
+        help="モデル pkl のパス（未指定時は models/<approach>/latest/model.pkl を使用）※ensemble時は無視",
     )
     p.add_argument(
         "--feature-pipeline",
-        help="特徴量パイプライン pkl のパス（未指定時は models/<approach>/latest/feature_pipeline.pkl を使用）",
+        help="特徴量パイプライン pkl のパス（未指定時は models/<approach>/latest/feature_pipeline.pkl を使用）※ensemble時は無視",
     )
     p.add_argument(
         "--id-cols",
@@ -61,7 +71,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument(
         "--show-features",
         action="store_true",
-        help="使用した特徴量の一覧を表示・保存する（指定時のみ）",
+        help="使用した特徴量の一覧を表示・保存する（単体アプローチ時のみ有効）",
     )
     p.add_argument(
         "--quiet",
@@ -273,124 +283,245 @@ def wrap_csv_line(items: List[str], width: int = 80, indent: str = "") -> List[s
     return out
 
 
+# -------------------------
+# 内部ユーティリティ（単体モデルの推論）
+# -------------------------
+def _predict_with_single_approach(
+    approach: str,
+    df_live_raw: pd.DataFrame,
+    id_cols: List[str],
+    show_features: bool,
+    quiet: bool,
+    model_path_override: Optional[Path] = None,
+    pipe_path_override: Optional[Path] = None,
+) -> Tuple[pd.DataFrame, pd.Series, Optional[str]]:
+    """
+    指定アプローチ（base または sectional）で単体推論し、(出力DF, probaシリーズ, ログ名) を返す。
+    - df_live_raw は live_csv を読み込んだ“そのまま”の6行（Adapter 内で各系列用に整形）
+    - id_cols は最終DFに含める候補（存在する列のみ採用）
+    """
+    adapter = load_adapter(approach)
+    df_live = adapter.prepare_live_input(df_live_raw.copy(), PROJECT_ROOT)
+
+    # モデル／パイプラインのパス決定（latest 既定）
+    base_dir = PROJECT_ROOT / "models" / approach / "latest"
+    model_path = model_path_override if model_path_override else (base_dir / "model.pkl")
+    pipe_path = pipe_path_override if pipe_path_override else (base_dir / "feature_pipeline.pkl")
+
+    if not model_path.exists() or not pipe_path.exists():
+        # 見つからなければ空を返す（上位の ensemble でフォールバック）
+        return df_live, pd.Series([float("nan")] * len(df_live)), None
+
+    if not quiet:
+        print(f"[INFO] ({approach}) Loading model from {model_path}")
+        print(f"[INFO] ({approach}) Loading feature pipeline from {pipe_path}")
+    try:
+        model = joblib.load(model_path)
+        pipeline = joblib.load(pipe_path)
+        X_live = pipeline.transform(df_live)
+        if hasattr(model, "predict_proba"):
+            proba = model.predict_proba(X_live)[:, 1]
+        else:
+            y_hat = model.predict(X_live)
+            proba = y_hat.astype("float64", copy=False)
+        proba_s = pd.Series(proba, index=df_live.index, name=f"p_{approach}")
+        # 出力DF（ID列のみ拾う）
+        cols = [c for c in id_cols if c in df_live.columns]
+        out_df = df_live[cols].copy()
+        model_label = f"{approach}:{model_path.name}"
+        # 単体モード時の features レポートは呼び出し元が実施
+        return out_df, proba_s, model_label
+    except Exception as e:
+        if not quiet:
+            print(f"[WARN] ({approach}) prediction failed, treat as missing: {e}")
+        return df_live, pd.Series([float("nan")] * len(df_live)), None
+
+
 def main():
     args = parse_args()
 
     # 1) live_csv を読み込み（1レース分 / 6行）
-    df_live = pd.read_csv(args.live_csv)
-    n_live_rows = len(df_live)
+    df_live_raw = pd.read_csv(args.live_csv)
+    id_cols = [c for c in args.id_cols.split(",") if c in df_live_raw.columns]
 
-    # 2) Adapter をロードし、必要なら追加結合や派生列生成を行う
-    adapter = load_adapter(args.approach)
-    df_live = adapter.prepare_live_input(df_live, PROJECT_ROOT)
+    # 2) ensemble 以外（= 従来の単体推論）は従来どおり
+    if args.approach in ("base", "sectional"):
+        # 単体アプローチの従来フロー
+        adapter = load_adapter(args.approach)
+        df_live = adapter.prepare_live_input(df_live_raw.copy(), PROJECT_ROOT)
 
-    # 3) モデル／パイプラインのパスを決定（latest ディレクトリが既定）
-    base_dir = PROJECT_ROOT / "models" / args.approach / "latest"
-    model_path = Path(args.model) if args.model else (base_dir / "model.pkl")
-    pipe_path = Path(args.feature_pipeline) if args.feature_pipeline else (base_dir / "feature_pipeline.pkl")
+        base_dir = PROJECT_ROOT / "models" / args.approach / "latest"
+        model_path = Path(args.model) if args.model else (base_dir / "model.pkl")
+        pipe_path = Path(args.feature_pipeline) if args.feature_pipeline else (base_dir / "feature_pipeline.pkl")
 
-    # 4) ファイル存在チェック
-    if not model_path.exists():
-        sys.exit(f"[ERROR] model not found: {model_path}")
-    if not pipe_path.exists():
-        sys.exit(f"[ERROR] feature_pipeline not found: {pipe_path}")
+        if not model_path.exists():
+            sys.exit(f"[ERROR] model not found: {model_path}")
+        if not pipe_path.exists():
+            sys.exit(f"[ERROR] feature_pipeline not found: {pipe_path}")
 
-    # 5) モデル / パイプラインをロード
-    if not args.quiet:
-        print(f"[INFO] Loading model from {model_path}")
-        print(f"[INFO] Loading feature pipeline from {pipe_path}")
-    model = joblib.load(model_path)
-    pipeline = joblib.load(pipe_path)
+        if not args.quiet:
+            print(f"[INFO] Loading model from {model_path}")
+            print(f"[INFO] Loading feature pipeline from {pipe_path}")
+        model = joblib.load(model_path)
+        pipeline = joblib.load(pipe_path)
+        X_live = pipeline.transform(df_live)
+        if hasattr(model, "predict_proba"):
+            proba = model.predict_proba(X_live)[:, 1]
+        else:
+            y_hat = model.predict(X_live)
+            proba = y_hat.astype("float64", copy=False)
 
-    # 6) 特徴量変換（live_row → X）
-    X_live = pipeline.transform(df_live)
+        out_df = df_live[[c for c in id_cols if c in df_live.columns]].copy()
+        out_df["proba"] = proba
 
-    # 7) 予測確率を計算（is_top2=1 の確率を抽出）
-    if hasattr(model, "predict_proba"):
-        proba = model.predict_proba(X_live)[:, 1]
-    else:
-        y_hat = model.predict(X_live)
-        proba = y_hat.astype("float64", copy=False)
+        out_dir = PROJECT_ROOT / "data" / "live" / args.approach
+        out_dir.mkdir(parents=True, exist_ok=True)
+        stem = Path(args.live_csv).stem
+        out_path = out_dir / f"pred_{args.approach}_{stem}.csv"
+        out_df.to_csv(out_path, index=False, encoding="utf-8-sig")
 
-    # 8) 出力データフレーム構築（指定ID列＋予測確率）
-    id_cols = [c for c in args.id_cols.split(",") if c in df_live.columns]
-    out_df = df_live[id_cols].copy()
-    out_df["proba"] = proba
+        # features レポートは従来どおり
+        if args.show_features:
+            pipeline_ct = pipeline
+            num_cols, cat_cols, encoded_names = extract_feature_info(pipeline_ct)
+            report_text = build_features_report_text(
+                approach=args.approach,
+                stem=stem,
+                model_path=model_path,
+                pipe_path=pipe_path,
+                num_cols=num_cols,
+                cat_cols=cat_cols,
+                encoded_names=encoded_names,
+                n_live_rows=len(df_live),
+            )
+            features_txt_path = out_dir / f"features_{stem}.txt"
+            try:
+                with open(features_txt_path, "w", encoding="utf-8") as f:
+                    f.write(report_text)
+                if not args.quiet:
+                    print(f"\n[FEATURES] wrote: {features_txt_path}")
+            except Exception as e:
+                if not args.quiet:
+                    print(f"[WARN] 特徴量一覧の保存に失敗しました: {e}")
 
-    # 9) 出力先（data/live/<approach>/pred_<approach>_<入力ファイル名>.csv）
-    out_dir = PROJECT_ROOT / "data" / "live" / args.approach
-    out_dir.mkdir(parents=True, exist_ok=True)
-    stem = Path(args.live_csv).stem  # 例: raw_20250915_24_8
-    out_path = out_dir / f"pred_{args.approach}_{stem}.csv"
+        if not args.quiet:
+            print(f"[OK] saved predictions: {out_path}")
+            show_cols = [c for c in ["race_id", "code", "R", "wakuban", "player", "proba"] if c in out_df.columns]
+            summary = out_df.sort_values("proba", ascending=False)[show_cols].reset_index(drop=True)
+            model_name_for_log = f"{args.approach}:{model_path.name}"
+            with pd.option_context("display.max_rows", 50,
+                                   "display.width", 120,
+                                   "display.float_format", "{:,.4f}".format):
+                print(f"\n[SUMMARY] ({model_name_for_log}) prob(desc):")
+                print(summary.to_string(index=False))
+            if "wakuban" in summary.columns:
+                top2 = summary.head(2)[["wakuban", "proba"]].to_records(index=False)
+                pair = " - ".join([f"{int(w)}({p:.3f})" for w, p in top2])
+                print(f"\n[TOP2] {pair}")
+        return
 
-    # 10) CSV を UTF-8-SIG で保存（Excelでも文字化けしにくい）
-    out_df.to_csv(out_path, index=False, encoding="utf-8-sig")
+    # 3) ここから ensemble モード（新規追加）
+    if args.approach == "ensemble":
+        if build_meta_features is None:
+            sys.exit("[ERROR] ensemble is not available: src/ensemble/meta_features.py が見つかりません。")
 
-    # 11) （任意）使用列情報の抽出〜保存〜ログ出力
-    if args.show_features:
-        # 使用列情報の抽出（数値列 / カテゴリ列 / 展開後名）
-        num_cols, cat_cols, encoded_names = extract_feature_info(pipeline)
-
-        # レポート本文を生成
-        report_text = build_features_report_text(
-            approach=args.approach,
-            stem=stem,
-            model_path=model_path,
-            pipe_path=pipe_path,
-            num_cols=num_cols,
-            cat_cols=cat_cols,
-            encoded_names=encoded_names,
-            n_live_rows=n_live_rows,
+        # 3-1) base を推論
+        out_base_df, p_base, label_base = _predict_with_single_approach(
+            "base", df_live_raw, id_cols, show_features=False, quiet=args.quiet
         )
 
-        # 使用列情報の保存（テキスト）
-        features_txt_path = out_dir / f"features_{stem}.txt"
-        try:
-            with open(features_txt_path, "w", encoding="utf-8") as f:
-                f.write(report_text)
-            saved_features_txt = True
-        except Exception as e:
-            saved_features_txt = False
-            if not args.quiet:
-                print(f"[WARN] 特徴量一覧の保存に失敗しました: {e}")
-    else:
-        report_text = ""
-        features_txt_path = None
-        saved_features_txt = False
+        # 3-2) sectional を推論（失敗・未整備なら NaN）
+        out_sec_df, p_sectional, label_sec = _predict_with_single_approach(
+            "sectional", df_live_raw, id_cols, show_features=False, quiet=args.quiet
+        )
 
-    # 12) ログ出力（--quiet で抑止）
-    if not args.quiet:
-        print(f"[OK] saved predictions: {out_path}")
+        # 3-3) ID列を優先度で確定（base→sectional→raw の順で拾う）
+        def _pick_ids(*dfs: pd.DataFrame) -> pd.DataFrame:
+            for d in dfs:
+                if d is not None and len(d.columns) > 0:
+                    return d[[c for c in id_cols if c in d.columns]].copy()
+            return df_live_raw[[c for c in id_cols if c in df_live_raw.columns]].copy()
 
-        # ---- サマリ表示（確率降順）----
-        show_cols = [c for c in ["race_id", "code", "R", "wakuban", "player", "proba"] if c in out_df.columns]
-        summary = out_df.sort_values("proba", ascending=False)[show_cols].reset_index(drop=True)
+        out_ids = _pick_ids(out_base_df, out_sec_df, df_live_raw)
 
-        model_name_for_log = f"{args.approach}:{model_path.name}"
-        with pd.option_context("display.max_rows", 50,
-                               "display.width", 120,
-                               "display.float_format", "{:,.4f}".format):
-            print(f"\n[SUMMARY] ({model_name_for_log}) prob(desc):")
-            print(summary.to_string(index=False))
+        # 3-4) メタ入力用の DataFrame を構築（必要列: p_base, p_sectional ほか任意の文脈列）
+        meta_df = out_ids.copy()
+        meta_df["p_base"] = p_base.values if len(p_base) == len(meta_df) else float("nan")
+        meta_df["p_sectional"] = p_sectional.values if len(p_sectional) == len(meta_df) else float("nan")
 
-        if "wakuban" in summary.columns:
-            top2 = summary.head(2)[["wakuban", "proba"]].to_records(index=False)
-            pair = " - ".join([f"{int(w)}({p:.3f})" for w, p in top2])
-            print(f"\n[TOP2] {pair}")
+        # 可能なら stage / race_attribute も供給（base側→sectional側→rawの順に探す）
+        for c in ["stage", "race_attribute"]:
+            if c not in meta_df.columns:
+                if out_base_df is not None and c in out_base_df.columns:
+                    meta_df[c] = out_base_df[c]
+                elif out_sec_df is not None and c in out_sec_df.columns:
+                    meta_df[c] = out_sec_df[c]
+                elif c in df_live_raw.columns:
+                    meta_df[c] = df_live_raw[c]
 
-        # ---- 見やすい列レポート（フラグ指定時のみ / cp932対策付き）----
-        if args.show_features and report_text:
-            def _safe_print_block(text: str):
-                try:
-                    print("\n" + text)
-                except UnicodeEncodeError:
-                    enc = sys.stdout.encoding or "utf-8"
-                    safe = text.encode(enc, errors="replace").decode(enc, errors="replace")
-                    print("\n" + safe)
+        # 3-5) メタ特徴を生成
+        X_meta, used_cols = build_meta_features(meta_df)
+        # ★ここから追加：学習時の列順・列集合に合わせる
+        from pathlib import Path
+        import json
+        meta_dir = PROJECT_ROOT / "models" / "ensemble" / "latest"
+        with open(meta_dir / "meta_features.json", "r", encoding="utf-8") as f:
+            meta_info = json.load(f)
+        trained_cols = meta_info.get("used_cols", [])
+        if trained_cols:
+            X_meta = X_meta.reindex(columns=trained_cols, fill_value=0.0)
+        # ★ここまで追加
 
-            _safe_print_block(report_text)
-            if saved_features_txt and features_txt_path:
-                print(f"\n[FEATURES] wrote: {features_txt_path}")
+        # 3-6) メタモデルを読み込み（models/ensemble/latest/meta_model.pkl）
+        meta_dir = PROJECT_ROOT / "models" / "ensemble" / "latest"
+        meta_model_path = meta_dir / "meta_model.pkl"
+        if not meta_model_path.exists():
+            sys.exit(f"[ERROR] meta_model not found: {meta_model_path}")
+        if not args.quiet:
+            print(f"[INFO] (ensemble) Loading meta model from {meta_model_path}")
+        meta_model = joblib.load(meta_model_path)
+
+        # 3-7) 最終確率を算出
+        if hasattr(meta_model, "predict_proba"):
+            p_ens = meta_model.predict_proba(X_meta)[:, 1]
+        else:
+            y_hat = meta_model.predict(X_meta)
+            p_ens = y_hat.astype("float64", copy=False)
+
+        # 3-8) 出力DF
+        out_df = meta_df.copy()
+        out_df["p_base"] = meta_df["p_base"]
+        out_df["p_sectional"] = meta_df["p_sectional"]
+        out_df["proba"] = p_ens  # 最終（アンサンブル）確率
+
+        # 3-9) 保存先とファイル名
+        out_dir = PROJECT_ROOT / "data" / "live" / "ensemble"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        stem = Path(args.live_csv).stem
+        out_path = out_dir / f"pred_ensemble_{stem}.csv"
+        out_df.to_csv(out_path, index=False, encoding="utf-8-sig")
+
+        # 3-10) ログ出力（簡潔）
+        if not args.quiet:
+            print(f"[OK] saved predictions: {out_path}")
+            show_cols = [c for c in ["race_id", "code", "R", "wakuban", "player", "p_base", "p_sectional", "proba"] if c in out_df.columns]
+            summary = out_df.sort_values("proba", ascending=False)[show_cols].reset_index(drop=True)
+            label_base = label_base or "base:NA"
+            label_sec = label_sec or "sectional:NA"
+            with pd.option_context("display.max_rows", 50,
+                                   "display.width", 140,
+                                   "display.float_format", "{:,.4f}".format):
+                print(f"\n[SUMMARY] (ensemble <- {label_base} + {label_sec}) prob(desc):")
+                print(summary.to_string(index=False))
+            if "wakuban" in summary.columns:
+                top2 = summary.head(2)[["wakuban", "proba"]].to_records(index=False)
+                pair = " - ".join([f"{int(w)}({p:.3f})" for w, p in top2])
+                print(f"\n[TOP2] {pair}")
+
+        return
+
+    # 4) 未知のアプローチ
+    sys.exit(f"[ERROR] unknown approach: {args.approach}")
 
 
 if __name__ == "__main__":
