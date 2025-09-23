@@ -1,0 +1,11 @@
+{
+  "created_at": "20250923_213512",
+  "base_oof": "C:\\Users\\user\\Desktop\\Git\\ark-blueprints\\data\\processed\\ensemble\\oof\\base_top2.csv",
+  "sectional_oof": "C:\\Users\\user\\Desktop\\Git\\ark-blueprints\\data\\processed\\ensemble\\oof\\sectional_top2.csv",
+  "samples": 200,
+  "metrics_oof": {
+    "auc": 0.563,
+    "logloss": 0.6884349539750297
+  },
+  "notes": "stacking logistic regression on OOF"
+}

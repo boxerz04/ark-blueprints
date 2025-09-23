@@ -1,0 +1,11 @@
+{
+  "used_cols": [
+    "p_base",
+    "p_sectional",
+    "m_base",
+    "m_sectional",
+    "is_sectional_missing",
+    "stage_finals",
+    "race_attribute_general"
+  ]
+}
