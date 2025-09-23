@@ -23,84 +23,41 @@ Ark Blueprints は、ボートレースのデータを **収集 → 前処理 �
 
 ```text
 ark-blueprints/
-│
-├─ data/                         # データ格納（.gitignore 推奨）
-│   ├─ html/                     # スクレイピング取得HTML
-│   │   ├─ odds3t/               # 3連単オッズHTML
-│   │   ├─ odds2tf/              # 2連単・2連複オッズHTML
-│   │   ├─ pay/                  # 払戻ページHTML
-│   │   └─ raceresult/           # レース結果ページHTML
-│   ├─ raw/                      # 日次レースCSV（64列: 63 + section_id）
-│   ├─ refund/                   # 払戻金CSV
-│   ├─ timeline/                 # 直前オッズタイムラインCSV
-│   └─ processed/                # 前処理・特徴量・ラベル等の成果物
-│       ├─ master.csv            # 全レース統合（基礎）
-│       ├─ X_base.npz / y.csv    # baseモデル用の特徴量・ラベル
-│       ├─ X_top2pair_dense.npz  # top2pairモデル用の特徴量
-│       ├─ y_top2pair.csv
-│       └─ ids_top2pair.csv
-│
-├─ logs/
-│
-├─ notebooks/
-│   ├─ preprocess.ipynb          # 前処理フロー検証
-│   └─ features.ipynb            # 特徴量検証
-│
-├─ scripts/
-│   ├─ scrape.py
-│   ├─ build_raw_csv.py
-│   ├─ build_timeline_live.py
-│   ├─ run_odds_scheduler.py
-│   ├─ scrape_odds.py
-│   ├─ build_feature_pipeline.py # baseモデル用 前処理器生成
-│   ├─ train.py                  # baseモデル学習（runs / latest 更新）
-│   ├─ build_live_row.py         # 推論用ライブ行生成
-│   ├─ predict_one_race.py       # 単発推論（baseモデル）
-│   ├─ build_top2pair_dataset.py # top2pair用 データセット生成
-│   ├─ train_top2pair.py         # top2pairモデル学習
-│   └─ predict_top2pair.py       # top2pairモデル推論
+├─ scripts/                # 実行スクリプト群
+│  ├─ scrape_one_race.py   # 公式サイトから1Rデータ取得
+│  ├─ build_live_row.py    # 直前データを加工してCSV化
+│  ├─ preprocess_base_features.py  # base特徴量生成（notebook不要）
+│  ├─ preprocess_sectional.py      # sectional特徴量前処理
+│  ├─ features_sectional.py        # sectional用特徴量生成
+│  ├─ predict_one_race.py          # 単レース推論（base / sectional対応）
+│  ├─ predict_top2pair.py          # ペアモデル推論（任意）
+│  └─ ...
 │
 ├─ src/
-│   ├─ __init__.py
-│   ├─ data_loader.py
-│   ├─ feature_engineering.py
-│   ├─ model.py
-│   ├─ model_utils.py            # 共通: 保存・ロード・ID生成
-│   └─ utils.py
+│  └─ adapters/
+│     ├─ base.py           # baseモデル用アダプタ
+│     └─ sectional.py      # sectionalモデル用アダプタ
 │
-├─ models/
-│   ├─ base/                     # baseモデル系
-│   │   ├─ latest/
-│   │   │   ├─ model.pkl
-│   │   │   ├─ feature_pipeline.pkl
-│   │   │   └─ train_meta.json
-│   │   └─ runs/
-│   │       └─ <model_id>/       # 例: 20250913_141256
-│   │           ├─ model.pkl
-│   │           ├─ feature_pipeline.pkl
-│   │           └─ train_meta.json
-│   │
-│   └─ top2pair/                 # top2ペア方式モデル
-│       ├─ latest/
-│       │   ├─ model.pkl
-│       │   └─ train_meta.json
-│       └─ runs/
-│           └─ <model_id>/
-│               ├─ model.pkl
-│               ├─ train_meta.json
-│               ├─ feature_importance.csv
-│               └─ cv_folds.csv
+├─ models/                 # 学習済みモデル
+│  ├─ base/latest/
+│  ├─ sectional/latest/
+│  └─ top2pair/latest/
+│
+├─ data/
+│  ├─ live/                # 直前データと推論結果
+│  ├─ processed/
+│  │  ├─ base/             # base特徴量保存
+│  │  └─ sectional/        # sectional特徴量保存
+│  └─ config/settings.json # GUIの設定保存
 │
 ├─ docs/
-│   ├─ data_dictionary.md
-│   └─ design_notes.md
+│  ├─ usage_train.md       # 学習手順
+│  └─ usage_predict.md     # 推論手順
 │
-├─ tests/
-│
-├─ requirements.txt
-├─ README.md
-└─ .gitignore
+├─ gui_predict_one_race.py # GUIランチャー（base/sectional切替対応）
+└─ suji_strategy.py        # スジ舟券生成ロジック（現在はGUIから分離）
 ```
+
 
 
 
