@@ -462,7 +462,7 @@ def main():
         # 3-5) メタ特徴を生成
         X_meta, used_cols = build_meta_features(meta_df)
         # ★ここから追加：学習時の列順・列集合に合わせる
-        from pathlib import Path
+        
         import json
         meta_dir = PROJECT_ROOT / "models" / "ensemble" / "latest"
         with open(meta_dir / "meta_features.json", "r", encoding="utf-8") as f:

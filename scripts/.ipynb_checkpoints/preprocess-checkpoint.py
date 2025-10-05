@@ -504,7 +504,7 @@ def main():
         out_path.parent.mkdir(parents=True, exist_ok=True)
         df_kept.to_csv(out_path, index=False, encoding="utf-8-sig")
         print(f"[OK] wrote master.csv : {out_path}  {df_kept.shape}")
-        write_run_log(reports_dir, out_path, start_dt, end_dt, df_kept)
+	write_run_log(reports_dir, out_path, start_dt, end_dt, df_kept)
         write_exclusion_reports(reports_dir, drop_info)
         print(f"[OK] reports dir      : {reports_dir}")
     except Exception as e:
