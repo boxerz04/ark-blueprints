@@ -41,13 +41,23 @@ python scripts\build_raw_csv.py --date 20250922
 * `data/raw/YYYYMMDD_raw.csv` （64列のレースデータ）
 * `data/refund/YYYYMMDD_refund.csv` （払戻金データ）
 
-## 3. 前処理（master.csv生成 + 例外検知レポート）
+## 3. 前処理（master.csv 生成 + 例外検知レポート + 期間指定対応）
 
 ```powershell
+# 期間を指定しない（従来どおり全期間）
 python scripts\preprocess.py --raw-dir data\raw --out data\processed\master.csv --reports-dir data\processed\reports
+
+# 期間を指定して出力（start/end は当日を含む・inclusive）
+python scripts\preprocess.py --raw-dir data\raw --out data\processed\master.csv --reports-dir data\processed\reports --start-date 2025-05-21 --end-date 2025-09-21
 ```
 * `data/processed/master.csv` （64列のレースデータ）
-* `data/processed/reports/anomalies_report_YYYYMMDD-hhmmss.csv` （ログに除外行・除外レースが出力されます）
+* `<reports-dir>/anomalies_report_YYYYMMDD-hhmmss.csv` … 異常値スキャン（rank/ST/気象など）
+* `<reports-dir>/excluded_races_YYYYMMDD-hhmmss.csv` … 今回実行で除外されたレース一覧
+* `<reports-dir>/excluded_races.csv` … 除外レースの累積集計
+* `<reports-dir>/master_run_YYYYMMDD-hhmmss.txt` … 実行メタ（期間・行数・除外内訳・保存先 など）
+* `（失敗時）<reports-dir>/crash_report_YYYYMMDD-hhmmss.txt` / `<reports-dir>/crash_rows_YYYYMMDD-hhmmss.csv`
+* `--reports-dir` を変えると、上記レポート一式はその配下に出力されます（例：`data/processed/master_meta` など）。
+* `--start-date`/`--end-date` を省略した場合は全期間を対象に処理します。
 
 ## 4. 特徴量生成
 ## 4-1. Base モデル用
@@ -104,6 +114,49 @@ data/processed/sectional/
   master_sectional.csv
 models/sectional/latest/
   feature_pipeline.pkl
+```
+
+## 4-3. Course モデル用（コース別履歴特徴）
+### 目的
+除外“前”の data/raw を用いて、選手×entry（進入後コース）ごとの直前 N 走の着別率・ST統計をリーク無しで作成し、master.csv に結合します。
+分母は「欠（欠場）のみ除外」、F/L/転/落/妨/不/エ/沈は出走扱いとして分母に含めます（数値着でないため分子には入らない）。
+
+### 実行（例：学習対象期間 2025-05-21〜2025-09-21、N=10、助走180日）:
+```powershell
+python scripts\preprocess_course.py ^
+  --master data\processed\master.csv ^
+  --raw-dir data\raw ^
+  --out data\processed\course\master_course.csv ^
+  --reports-dir data\processed\course_meta ^
+  --start-date 2025-05-21 ^
+  --end-date   2025-09-21 ^
+  --warmup-days 180 ^
+  --n-last 10
+```
+- --warmup-days は直前N走の分母確保のために 開始日より過去まで raw を読み込む助走期間です。N を増やす場合は十分に大きめ（例：365）を推奨。
+- リーク防止のため、集計は groupby(player_id, entry) → shift(1) → rolling(N) で当該レースを含まない直前履歴のみから算出します。
+- 将来的に 枠番（wakuban）基準の同型特徴も追加予定です（サフィックスは ..._waku を想定）。現状は entry 基準のみ出力します。
+
+👉出力:
+```bash
+data/processed/course/master_course.csv
+```
+- master.csv に以下の entry基準・直前N走の列が追加されたもの
+
+ - finish1_rate_last{N}_entry, finish1_cnt_last{N}_entry
+
+ - finish2_rate_last{N}_entry, finish2_cnt_last{N}_entry
+
+ - finish3_rate_last{N}_entry, finish3_cnt_last{N}_entry
+
+ - st_mean_last{N}_entry, st_std_last{N}_entry
+
+ - 当該レース結果（検証用）：finish1_flag_cur / finish2_flag_cur / finish3_flag_cur
+```bash
+# 実行メタ（対象期間、rawの使用期間、窓長、行数など）
+data/processed/course_meta/course_run_YYYYMMDD-hhmmss.txt
+# 失敗時
+data/processed/course_meta/crash_report_...txt / crash_rows_...csv
 ```
 
 
