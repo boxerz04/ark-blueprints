@@ -50,7 +50,7 @@ python scripts\preprocess.py --raw-dir data\raw --out data\processed\master.csv 
 # 期間を指定して出力（start/end は当日を含む・inclusive）
 python scripts\preprocess.py --raw-dir data\raw --out data\processed\master.csv --reports-dir data\processed\reports --start-date 2025-05-21 --end-date 2025-09-21
 ```
-* `data/processed/master.csv` （64列のレースデータ）
+* `data/processed/master.csv` … 前処理済みマスタ（prior参照により列が追加されます）
 * `<reports-dir>/anomalies_report_YYYYMMDD-hhmmss.csv` … 異常値スキャン（rank/ST/気象など）
 * `<reports-dir>/excluded_races_YYYYMMDD-hhmmss.csv` … 今回実行で除外されたレース一覧
 * `<reports-dir>/excluded_races.csv` … 除外レースの累積集計
@@ -58,6 +58,8 @@ python scripts\preprocess.py --raw-dir data\raw --out data\processed\master.csv 
 * `（失敗時）<reports-dir>/crash_report_YYYYMMDD-hhmmss.txt` / `<reports-dir>/crash_rows_YYYYMMDD-hhmmss.csv`
 * `--reports-dir` を変えると、上記レポート一式はその配下に出力されます（例：`data/processed/master_meta` など）。
 * `--start-date`/`--end-date` を省略した場合は全期間を対象に処理します。
+* prior 結合の参照先は既定で `--priors-root data\priors`（変更する場合は引数を指定）。
+* 展示タイムの Z スコア計算で使う SD 下限は `--tenji-sd-floor`（既定 `0.02`）。
 
 ## 4. 特徴量生成
 ## 4-1. Base モデル用
