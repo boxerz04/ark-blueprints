@@ -3,8 +3,8 @@
 build_tenji_prior_from_raw.py
 - data/raw/<*.csv> を preprocess.load_raw で結合
 - 指定期間 [--from, --to] を抽出して "展示タイム prior" を作成
-- キー: (place, wakuban, season_bin)
-- 出力: data/priors/tenji/tenji_prior__<from>_<to>__keys-place-wakuban-seasonbin__sdfloor-<val>__m<m>__v1.csv
+- キー: (place, wakuban, season_q)  ※四季: spring/summer/autumn/winter
+- 出力: data/priors/tenji/tenji_prior__<from>_<to>__keys-place-wakuban-seasonq__sdfloor-<val>__m<m>__v1.csv
 """
 
 from pathlib import Path
@@ -20,7 +20,7 @@ def ensure_dir(p: Path):
 
 
 def parse_args():
-    ap = argparse.ArgumentParser(description="Build Tenji prior from raw CSVs.")
+    ap = argparse.ArgumentParser(description="Build Tenji prior (season_q) from raw CSVs.")
     ap.add_argument("--raw-dir", type=str, default="data/raw", help="日次CSVが並ぶディレクトリ")
     ap.add_argument("--from", dest="from_date", type=str, required=True, help="開始日 YYYYMMDD")
     ap.add_argument("--to", dest="to_date", type=str, required=True, help="終了日 YYYYMMDD")
@@ -29,6 +29,17 @@ def parse_args():
     ap.add_argument("--out", type=str, required=True, help="出力CSVパス（data/priors/tenji/... を推奨）")
     ap.add_argument("--link-latest", action="store_true", help="同フォルダに latest.csv を作成/上書き")
     return ap.parse_args()
+
+
+def season_q_from_month(m: int) -> str:
+    # 3–5: spring, 6–8: summer, 9–11: autumn, 12/1/2: winter
+    if 3 <= m <= 5:
+        return "spring"
+    if 6 <= m <= 8:
+        return "summer"
+    if 9 <= m <= 11:
+        return "autumn"
+    return "winter"  # 12, 1, 2 は常に冬（うるう年も問題なし）
 
 
 def main():
@@ -50,7 +61,6 @@ def main():
     df = df.loc[mask].copy()
     print(f"[INFO] period: {args.from_date}..{args.to_date} -> rows={len(df)}")
 
-    # 期間にデータが無い場合は、利用可能な date 範囲を案内して終了
     if len(df) == 0:
         if "date" in df_raw.columns and len(df_raw) > 0:
             dmin = pd.to_datetime(df_raw["date"]).min()
@@ -60,12 +70,12 @@ def main():
             )
         raise ValueError("raw データが空、または date 列が見つかりません。")
 
-    # 行ごとに season_bin を付与（10–3: cold, 4–9: warm）
+    # 行ごとに season_q を付与
     months = df["date"].dt.month
-    df["season_bin"] = np.where(months.isin([10, 11, 12, 1, 2, 3]), "cold", "warm")
+    df["season_q"] = months.map(season_q_from_month)
 
     # 必須列チェック
-    need = {"time_tenji", "place", "wakuban", "date", "season_bin"}
+    need = {"time_tenji", "place", "wakuban", "date", "season_q"}
     missing = [c for c in need if c not in df.columns]
     if missing:
         raise KeyError(f"必要列が見つかりません: {missing}")
@@ -81,8 +91,8 @@ def main():
     sd_g = float(df["time_tenji"].std(ddof=0))
     print(f"[INFO] global mu={mu_g:.4f}, sd={sd_g:.4f}")
 
-    # place × wakuban × season_bin で集計
-    g = df.groupby(["place", "wakuban", "season_bin"])
+    # place × wakuban × season_q で集計
+    g = df.groupby(["place", "wakuban", "season_q"])
     tbl = g.agg(
         tenji_mu=("time_tenji", "mean"),
         tenji_sd=("time_tenji", "std"),
@@ -100,11 +110,11 @@ def main():
     tbl["built_to"] = args.to_date
     tbl["sd_floor"] = float(args.sd_floor)
     tbl["m_strength"] = int(args.m_strength)
-    tbl["keys"] = "place-wakuban-seasonbin"
+    tbl["keys"] = "place-wakuban-seasonq"
     tbl["version"] = 1
 
     # 保存
-    tbl = tbl.sort_values(["place", "wakuban", "season_bin"]).reset_index(drop=True)
+    tbl = tbl.sort_values(["place", "wakuban", "season_q"]).reset_index(drop=True)
     tbl.to_csv(out_path, index=False, encoding="utf-8-sig")
     print(f"[OK] wrote prior: {out_path} (rows={len(tbl)})")
 
