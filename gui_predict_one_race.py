@@ -7,6 +7,8 @@
 # - 「列情報を表示(--show-features)」はメインボタン群の近くに配置（デフォルトOFF）
 # - 「CSV自動推定」はメインボタン群の近くに配置（on なら raw_{date}_{jcd}_{race}.csv を自動選択）
 # - 設定は data/config/settings.json に保存/復元
+# - 追加: 「デバッグCSV出力(_debug_merged.csv)」チェック（デフォルトOFF）
+#         ON時のみ ADAPTER_DUMP_CSV / ADAPTER_DUMP_STEPS を predict サブプロセスへ付与
 # ------------------------------------------------------------
 
 import os
@@ -101,7 +103,7 @@ class Runner:
         except Exception:
             pass
 
-    def _run_and_stream(self, cmd, cwd=None):
+    def _run_and_stream(self, cmd, cwd=None, env=None):
         if self.stop_flag.is_set(): return 1
         enc = locale.getpreferredencoding(False)
         self._log(f"\n$ {' '.join(map(str, cmd))}\n")
@@ -116,7 +118,8 @@ class Runner:
             cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, bufsize=1, universal_newlines=True,
             encoding=enc, errors="replace",
-            creationflags=creationflags, preexec_fn=preexec_fn
+            creationflags=creationflags, preexec_fn=preexec_fn,
+            env=env
         )
 
         for raw in self.current_proc.stdout:
@@ -134,7 +137,8 @@ class Runner:
                      use_online: bool,
                      use_csv: bool, csv_path: str, csv_autoguess: bool,
                      show_features: bool,
-                     repo_root: str):
+                     repo_root: str,
+                     dump_debug: bool = False):
         """スクレイプ→推論 or CSV→推論 を実行"""
         # スクリプト存在チェック
         for k in ("scrape_one_race","build_live_row","predict_one_race"):
@@ -192,7 +196,7 @@ class Runner:
             self._log(f"ERROR: {approach} モデルが不足しています。\n  model: {model_pkl}\n  feature_pipeline: {feat_pkl}")
             return
 
-        # 5) predict_one_race
+        # 5) predict_one_race（デバッグCSV出力は環境変数でON/OFF）
         cmd3 = [sys.executable, SCRIPTS["predict_one_race"],
                 "--live-csv", in_csv,
                 "--approach", approach,
@@ -200,7 +204,14 @@ class Runner:
                 "--feature-pipeline", feat_pkl]
         if show_features:
             cmd3.append("--show-features")
-        rc = self._run_and_stream(cmd3, cwd=repo_root)
+
+        env3 = None
+        if dump_debug:
+            env3 = os.environ.copy()
+            env3["ADAPTER_DUMP_CSV"] = os.path.join("data", "live", "_debug_merged.csv")
+            env3["ADAPTER_DUMP_STEPS"] = "1"  # 段階別に出す
+
+        rc = self._run_and_stream(cmd3, cwd=repo_root, env=env3)
         if rc != 0 or self.stop_flag.is_set(): return
 
         self._log("\n=== すべて完了しました ✅ ===\n")
@@ -211,10 +222,10 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(APP_TITLE)
-        self.geometry("1020x740")
+        self.geometry("1020x760")
         self.settings = load_settings()
 
-        # 入力値（旧版に近いUI：JCD/RACEはコンボボックス固定）
+        # 入力値
         self.var_date  = tk.StringVar(value=self.settings.get("date", today_jst_yyyymmdd()))
         self.var_jcd   = tk.StringVar(value=self.settings.get("jcd", "24"))
         self.var_race  = tk.StringVar(value=self.settings.get("race","12"))
@@ -222,9 +233,11 @@ class App(tk.Tk):
 
         # 実行オプション
         self.var_use_csv        = tk.BooleanVar(value=self.settings.get("use_csv", False))
-        self.var_csv_autoguess  = tk.BooleanVar(value=self.settings.get("csv_autoguess", True))  # 追加: 自動推定（デフォON）
+        self.var_csv_autoguess  = tk.BooleanVar(value=self.settings.get("csv_autoguess", True))
         self.var_csv_path       = tk.StringVar(value=self.settings.get("csv_path",""))
-        self.var_show_features  = tk.BooleanVar(value=self.settings.get("show_features", False)) # 追加: 列情報を表示（デフォOFF）
+        self.var_show_features  = tk.BooleanVar(value=self.settings.get("show_features", False))
+        # 追加: デバッグCSV出力（デフォルトOFF）
+        self.var_dump_debug     = tk.BooleanVar(value=self.settings.get("dump_debug", False))
 
         # 詳細設定
         self.var_advanced = tk.BooleanVar(value=False)  # 起動時は表示OFF
@@ -259,14 +272,15 @@ class App(tk.Tk):
         cmb.grid(row=0, column=7, padx=(5,15))
         cmb.bind("<<ComboboxSelected>>", self._on_change_approach)
 
-        # メインボタン群（ここに CSV/列情報のチェックを配置）
+        # メインボタン群（ここに CSV/列情報/デバッグCSVチェックを配置）
         frm_btn = ttk.Frame(self); frm_btn.pack(fill=tk.X, padx=10, pady=6)
         self.btn_run  = ttk.Button(frm_btn, text="▶ 推論開始", command=self.on_run, width=20); self.btn_run.pack(side=tk.LEFT)
         self.btn_stop = ttk.Button(frm_btn, text="■ 停止", command=self.on_stop, width=10, state=tk.DISABLED); self.btn_stop.pack(side=tk.LEFT, padx=6)
-        # ここにチェック類
         ttk.Checkbutton(frm_btn, text="既存CSVから推論", variable=self.var_use_csv).pack(side=tk.LEFT, padx=(18,8))
         ttk.Checkbutton(frm_btn, text="CSV自動推定", variable=self.var_csv_autoguess).pack(side=tk.LEFT, padx=(0,12))
         ttk.Checkbutton(frm_btn, text="列情報を表示 (--show-features)", variable=self.var_show_features).pack(side=tk.LEFT, padx=(0,12))
+        # 追加: デバッグCSV出力（デフォルトOFF）
+        ttk.Checkbutton(frm_btn, text="デバッグCSV出力 (_debug_merged.csv)", variable=self.var_dump_debug).pack(side=tk.LEFT, padx=(0,12))
         ttk.Button(frm_btn, text="📁 出力フォルダ（data/live）", command=self._open_live_dir).pack(side=tk.RIGHT)
 
         # CSV指定行
@@ -332,6 +346,7 @@ class App(tk.Tk):
         csv_path      = self.var_csv_path.get().strip()
         show_features = bool(self.var_show_features.get())
         use_online    = bool(self.var_online.get())
+        dump_debug    = bool(self.var_dump_debug.get())
 
         # 入力チェック
         if not valid_yyyymmdd(date):
@@ -357,6 +372,7 @@ class App(tk.Tk):
             "csv_autoguess": csv_autoguess,
             "csv_path": csv_path,
             "show_features": show_features,
+            "dump_debug": dump_debug,  # ← 追加保存
             "model_dir_base": self.var_model_dir_map.get("base", os.path.join("models","base","latest")),
             "model_dir_sectional": self.var_model_dir_map.get("sectional", os.path.join("models","sectional","latest")),
             "use_online": use_online,
@@ -367,7 +383,7 @@ class App(tk.Tk):
         self.btn_stop.config(state=tk.NORMAL)
         self._log("="*76)
         self._log(f"開始: date={date}, jcd={jcd}, race={race}, approach={approach}")
-        self._log(f"model_dir={model_dir or f'models/{approach}/latest'} | CSVモード={'ON' if use_csv else 'OFF'} | 自動推定={'ON' if csv_autoguess else 'OFF'} | show_features={'ON' if show_features else 'OFF'} | online={'ON' if use_online else 'OFF'}")
+        self._log(f"model_dir={model_dir or f'models/{approach}/latest'} | CSVモード={'ON' if use_csv else 'OFF'} | 自動推定={'ON' if csv_autoguess else 'OFF'} | show_features={'ON' if show_features else 'OFF'} | debug_csv={'ON' if dump_debug else 'OFF'} | online={'ON' if use_online else 'OFF'}")
         self._log("="*76)
 
         # 実行スレッド
@@ -380,6 +396,7 @@ class App(tk.Tk):
                     use_csv=use_csv, csv_path=csv_path, csv_autoguess=csv_autoguess,
                     show_features=show_features,
                     repo_root=os.getcwd(),
+                    dump_debug=dump_debug,  # ← 追加
                 )
             finally:
                 self.btn_run.config(state=tk.NORMAL)

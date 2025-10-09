@@ -143,14 +143,14 @@ def main():
 
     # 2) カテゴリ：season_q を採用、weather は不採用
     SAFE_CAT = [
-        "AB_class", "place", "wind_direction", "sex",   # weather は除外
+        "AB_class", "wind_direction", "sex",   # weather は除外
         "race_grade", "race_type", "race_attribute",
         "season_q",  # ← 追加採用
     ]
     DROP_FEATS = [
         "origin","team","parts_exchange","title","schedule","timetable",
         "precondition_1","precondition_2","propeller",
-        "weather",  # ← 明示的に除外
+        "weather", "place"  # ← 明示的に除外
     ]
     MAX_CAT_CARD = 50
 

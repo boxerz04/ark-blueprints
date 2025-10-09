@@ -513,62 +513,21 @@ def build_live_raw(date: str, jcd: str, rno: str, online: bool) -> pd.DataFrame:
             if pd.notnull(row_['ST_tenji']):
                 row_['ST_tenji'] = '0' + str(row_['ST_tenji']).strip()
 
-        # --- 展示（コース / ST_tenji）: wakuban順で横結合する ---
-        # 1) 枠番順の選手（df_b[1]）
+        # --- wakuban（枠番）を保持して raw に乗せる ---
         ex_member_src = df_b[1][['枠', 'ボートレーサー']].droplevel(0, axis=1)
-        ex_member = (
-            ex_member_src
-              .assign(wakuban=lambda d: pd.to_numeric(d['枠'], errors='coerce').astype('Int64'))
-              .dropna(subset=['wakuban'])
-              .drop_duplicates(subset=['wakuban'])
-              .sort_values('wakuban')
-              .rename(columns={'ボートレーサー': 'player'})[['player', 'wakuban']]
-              .reset_index(drop=True)
+        ex_member_src = ex_member_src[~ex_member_src['枠'].astype(int).duplicated()].copy()
+        ex_member = ex_member_src.rename(columns={'枠': 'wakuban', 'ボートレーサー': 'player'})
+        ex_member['wakuban'] = ex_member['wakuban'].astype(int)
+        ex_member['entry'] = ex_member['wakuban'].astype(str)
+
+        ex_entry_member = pd.merge(
+            ex_member[['player', 'wakuban', 'entry']],
+            ex_entry[['entry', 'ST_tenji']],
+            on='entry',
+            how='left'
         )
-        
-        # 2) コース表（df_b[2]）から “展示コース” と “展示ST”
-        ex2 = df_b[2].droplevel(0, axis=1).copy()
-        ex2 = ex2[ex2['コース'].notna()].copy()
-        ex2 = ex2.head(6).reset_index(drop=True)
-        
-        # 展示コース（先頭の1桁数字を拾う → 1..6 以外はNAに）
-        ex2['entry_tenji'] = (
-            ex2['コース'].astype(str).str.extract(r'(\d)', expand=False)
-               .apply(lambda s: pd.to_numeric(s, errors='coerce')).astype('Int64')
-        )
-        
-        # 展示ST（後段で parse_st が面倒を見るので生のまま抽出）
-        st_pat = r'([FL]?\.\d{2}|[FL]\d{2}|\.\d{2}|\d{2})'
-        ex2['ST_tenji'] = ex2['コース'].astype(str).str.extract(st_pat, expand=False)
-        
-        # 3) wakuban順の行に展示情報を横結合（キー結合しない）
-        ex_join = pd.concat([ex_member, ex2[['entry_tenji', 'ST_tenji']]], axis=1)
-
-        # --- ここから置換（A=ex2['entry_tenji'], B=1..6 を結合→A昇順→Bを entry_tenji に） ---  # <<< 置換開始アンカー
-        # A: コース順に見た「枠番」例: [1,5,2,3,4,6]
-        A = ex2['entry_tenji'].astype('Int64').tolist()
-        # B: コース番号 1..6
-        B = list(range(1, len(A) + 1))  # ふつう6
-
-        # A/B を結合して A で昇順ソート
-        map_df = pd.DataFrame({'A_wakuban': A, 'B_course': B})
-        map_df_sorted = map_df.sort_values('A_wakuban').reset_index(drop=True)
-
-        # wakuban=1..6（= ex_member の行順）に対応する「真のコース番号」配列
-        entry_seq = map_df_sorted['B_course'].astype('Int64').tolist()
-
-        # そのまま entry_tenji に代入（ex_member は枠番昇順で6行固定）
-        ex_join['entry_tenji'] = pd.Series(entry_seq, dtype='Int64').values
-
-        # ST は「コース」に紐づくので、B（course）→ST の順で並べ替えて貼る
-        st_by_course = dict(zip(B, ex2['ST_tenji']))
-        ex_join['ST_tenji'] = [st_by_course[int(c)] if pd.notna(c) else np.nan for c in ex_join['entry_tenji']]
-
-        # 4) 従来と同じ列で raw 側に渡す
-        ex_entry = ex_join[['player', 'wakuban', 'entry_tenji', 'ST_tenji']].copy().reset_index(drop=True)
-        # --- 置換ここまで ---  # <<< 置換終了アンカー
-
-
+        ex_entry_member['entry_tenji'] = range(1, 7)
+        ex_entry = ex_entry_member[['player', 'wakuban', 'entry_tenji', 'ST_tenji']].copy().reset_index(drop=True)
 
         # 気象
         soup_b = BeautifulSoup(str(soup_bf), 'html.parser')
