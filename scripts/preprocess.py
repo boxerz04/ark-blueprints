@@ -512,6 +512,20 @@ def main():
             z = resid / np.maximum(sd, sd_floor)
             df["tenji_resid"] = resid
             df["tenji_z"] = z
+            
+        # race内ランキング（NaNは除外、同値は最小順位）
+        mask = df["tenji_resid"].notna()
+        df.loc[mask, "tenji_resid_rank"] = (
+            df.loc[mask].groupby("race_id")["tenji_resid"].rank(method="min", ascending=True)
+        )
+        maskz = df["tenji_z"].notna()
+        df.loc[maskz, "tenji_z_rank"] = (
+            df.loc[maskz].groupby("race_id")["tenji_z"].rank(method="min", ascending=True)
+        )
+        
+        # 任意：公式の色付け相当（トップ/2番手フラグ）
+        df["tenji_resid_top1"] = (df["tenji_resid_rank"] == 1).astype("Int64")
+        df["tenji_resid_top2"] = (df["tenji_resid_rank"] <= 2).astype("Int64")
 
     # 3) season_course prior（entry入着率）
     if not args.no_join_season_course:
