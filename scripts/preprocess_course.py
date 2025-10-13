@@ -232,6 +232,14 @@ def main():
             master[DATE_COL] = pd.to_datetime(master[DATE_COL])
         except Exception:
             master[DATE_COL] = pd.to_datetime(master[DATE_COL], errors="coerce")
+
+        # === ここを追加：推論時サポート（entry ← entry_tenji 補完）===
+        # ライブ行で entry が欠損のとき、entry_tenji があればそれで補完する
+        if "entry_tenji" in master.columns:
+            et = pd.to_numeric(master["entry_tenji"], errors="coerce").astype("Int64")
+            master["entry"] = master["entry"].fillna(et)
+        # === 追加ここまで ===
+
         print(f"[INFO] master shape: {master.shape}")
     except Exception as e:
         write_crash(reports_dir, "load_master", e, None)
@@ -296,6 +304,41 @@ def main():
     # 時系列ソート
     raw = raw.sort_values([DATE_COL, RACE_COL]).reset_index(drop=True)
 
+    # ---- (ライブ対応) masterの対象行を raw に“ダミー追加”してから履歴を作る
+    # 目的: 対象レースIDの行にも rolling 値を付ける（ダミー自身は分母に入れない）
+    dm = master[[RACE_COL, PLAYER_COL, ENTRY_COL, WAKU_COL, DATE_COL]].copy()
+
+    # 型そろえ
+    dm[PLAYER_COL] = dm[PLAYER_COL].astype(str)
+    dm[RACE_COL]   = dm[RACE_COL].astype(str)
+    dm[ENTRY_COL]  = pd.to_numeric(dm[ENTRY_COL], errors="coerce").astype("Int64")
+    dm[WAKU_COL]   = pd.to_numeric(dm[WAKU_COL],  errors="coerce").astype("Int64")
+    dm[DATE_COL]   = pd.to_datetime(dm[DATE_COL], errors="coerce")
+
+    # raw に既に存在する (race_id, player_id) はダミー追加しない（学習時の二重化防止）
+    dm = dm.merge(
+        raw[[RACE_COL, PLAYER_COL]].drop_duplicates(),
+        on=[RACE_COL, PLAYER_COL],
+        how="left",
+        indicator=True
+    )
+    dm = dm[dm["_merge"] == "left_only"].drop(columns="_merge")
+
+    # ダミーは rank/ST 空、出走フラグ False（分母に入れない）
+    dm["rank_tok"]     = np.nan
+    dm["rank_num"]     = np.nan
+    dm["started_mask"] = False
+    dm["ST_parsed"]    = np.nan
+    dm["exact1_flag"]  = np.nan
+    dm["exact2_flag"]  = np.nan
+    dm["exact3_flag"]  = np.nan
+    dm["__source_file"]= "_live_dummy_"
+
+    # raw に連結して再ソート（date, race_id）
+    if len(dm):
+        raw = pd.concat([raw, dm], ignore_index=True, sort=False)
+        raw = raw.sort_values([DATE_COL, RACE_COL]).reset_index(drop=True)
+
     # ---- entry軸の履歴
     try:
         hist_entry = compute_history_features(raw.copy(), ENTRY_COL, n_last, suffix="_entry")
@@ -313,9 +356,9 @@ def main():
     # ---- master 側：当該結果フラグ（検証用）
     m = master.copy()
     m[RANK_COL] = pd.to_numeric(m[RANK_COL], errors="coerce").astype("Int64")
-    m["finish1_flag_cur"] = (m[RANK_COL] == 1).astype(int)
-    m["finish2_flag_cur"] = (m[RANK_COL] == 2).astype(int)
-    m["finish3_flag_cur"] = (m[RANK_COL] == 3).astype(int)
+    m["finish1_flag_cur"] = (m[RANK_COL].eq(1)).fillna(False).astype(int)
+    m["finish2_flag_cur"] = (m[RANK_COL].eq(2)).fillna(False).astype(int)
+    m["finish3_flag_cur"] = (m[RANK_COL].eq(3)).fillna(False).astype(int)
 
     # ---- 結合（LEFT JOIN）
     try:

@@ -94,7 +94,8 @@ def main():
     ID_COLS  = ["race_id", "player", "player_id", "motor_number", "boat_number", "section_id"]
     LEAK_COLS = [
         "entry", "is_wakunari", "rank", "winning_trick", "remarks",
-        "henkan_ticket", "ST", "ST_rank", "__source_file"
+        "henkan_ticket", "ST", "ST_rank", "__source_file",
+        "finish1_flag_cur", "finish2_flag_cur", "finish3_flag_cur"
     ]
 
     # 必須チェック
