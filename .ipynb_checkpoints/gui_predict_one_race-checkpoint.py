@@ -39,7 +39,6 @@ SCRIPTS = {
     "scrape_one_race": os.path.join("scripts", "scrape_one_race.py"),
     "build_live_row":  os.path.join("scripts", "build_live_row.py"),
     "predict_one_race": os.path.join("scripts", "predict_one_race.py"),
-    "preprocess_course": os.path.join("scripts", "preprocess_course.py"),
 }
 
 # ====== ユーティリティ ======
@@ -187,40 +186,6 @@ class Runner:
             rc = self._run_and_stream(cmd2, cwd=repo_root)
             if rc != 0 or self.stop_flag.is_set(): return
             in_csv = out_csv
-
-        # 3.5) コース別履歴特徴を“上書き付与”して、live CSVに反映（学習と同ロジック）
-        # - 除外前rawを end-date（=指定日）まで + warmup日ぶん遡って読み、shift→rolling(N)。
-        # - entry は推論時、entry_tenji で補完（preprocess_course.py側で対応済み）。
-        # - ライブ行ダミー追加により対象レース行にも履歴が付与される（分母には入れない）。
-        if not in_csv:
-            self._log("[ERROR] 内部エラー: in_csv が未確定です。"); return
-
-        # 既定値（必要あればGUI拡張で可）
-        DEFAULT_WARMUP_DAYS = 180
-        DEFAULT_N_LAST = 10
-
-        # YYYYMMDD → YYYY-MM-DD
-        y, m, d = date_yyyymmdd[:4], date_yyyymmdd[4:6], date_yyyymmdd[6:]
-        start_str = f"{y}-{m}-{d}"
-        end_str   = f"{y}-{m}-{d}"
-
-        # レポート出力先
-        reports_dir = os.path.join("data", "processed", "course_meta_live")
-        ensure_parent_dir(os.path.join(reports_dir, "_dummy.txt"))  # 親だけ確保
-
-        cmd_pc = [
-            sys.executable, SCRIPTS["preprocess_course"],
-            "--master", in_csv,
-            "--raw-dir", os.path.join("data", "raw"),
-            "--out", in_csv,  # 上書き
-            "--reports-dir", reports_dir,
-            "--start-date", start_str,
-            "--end-date",   end_str,
-            "--warmup-days", str(DEFAULT_WARMUP_DAYS),
-            "--n-last",       str(DEFAULT_N_LAST),
-        ]
-        rc = self._run_and_stream(cmd_pc, cwd=repo_root)
-        if rc != 0 or self.stop_flag.is_set(): return
 
         # 4) モデルDIR（未指定なら models/<approach>/latest）
         if not model_dir:
