@@ -120,15 +120,16 @@ models/sectional/latest/
 
 ## 4-3. Course モデル用（コース別履歴特徴）
 ### 目的
-除外“前”の data/raw を用いて、選手×entry（進入後コース）ごとの直前 N 走の着別率・ST統計をリーク無しで作成し、master.csv に結合します。
-分母は「欠（欠場）のみ除外」、F/L/転/落/妨/不/エ/沈は出走扱いとして分母に含めます（数値着でないため分子には入らない）。
+- 除外“前”の data/raw を用いて、選手×entry（進入後コース）および選手×wakuban（枠番）ごとの直前 N 走の着別率・ST統計をリーク無しで作成し、master.csv に結合します。
+- 分母は「欠（欠場）のみ除外」、F/L/転/落/妨/不/エ/沈は出走扱いとして分母に含めます（数値着でないため分子には入らない）。
 
 ### 実行（例：学習対象期間 2025-05-21〜2025-09-21、N=10、助走180日）:
+- master.csv を上書き
 ```powershell
 python scripts\preprocess_course.py ^
   --master data\processed\master.csv ^
   --raw-dir data\raw ^
-  --out data\processed\course\master_course.csv ^
+  --out data\processed\master.csv ^
   --reports-dir data\processed\course_meta ^
   --start-date 2025-05-21 ^
   --end-date   2025-09-21 ^
@@ -137,28 +138,31 @@ python scripts\preprocess_course.py ^
 ```
 - --warmup-days は直前N走の分母確保のために 開始日より過去まで raw を読み込む助走期間です。N を増やす場合は十分に大きめ（例：365）を推奨。
 - リーク防止のため、集計は groupby(player_id, entry) → shift(1) → rolling(N) で当該レースを含まない直前履歴のみから算出します。
-- 将来的に 枠番（wakuban）基準の同型特徴も追加予定です（サフィックスは ..._waku を想定）。現状は entry 基準のみ出力します。
 
 👉出力:
 ```bash
-data/processed/course/master_course.csv
+data/processed/master.csv
 ```
 - master.csv に以下の entry基準・直前N走の列が追加されたもの
-
- - finish1_rate_last{N}_entry, finish1_cnt_last{N}_entry
-
- - finish2_rate_last{N}_entry, finish2_cnt_last{N}_entry
-
- - finish3_rate_last{N}_entry, finish3_cnt_last{N}_entry
-
- - st_mean_last{N}_entry, st_std_last{N}_entry
-
- - 当該レース結果（検証用）：finish1_flag_cur / finish2_flag_cur / finish3_flag_cur
 ```bash
-# 実行メタ（対象期間、rawの使用期間、窓長、行数など）
-data/processed/course_meta/course_run_YYYYMMDD-hhmmss.txt
-# 失敗時
-data/processed/course_meta/crash_report_...txt / crash_rows_...csv
+# entry基準
+finish1_rate_last10_entry, finish1_cnt_last10_entry
+finish2_rate_last10_entry, finish2_cnt_last10_entry
+finish3_rate_last10_entry, finish3_cnt_last10_entry
+st_mean_last10_entry, st_std_last10_entry
+
+# wakuban基準
+finish1_rate_last10_waku, finish1_cnt_last10_waku
+finish2_rate_last10_waku, finish2_cnt_last10_waku
+finish3_rate_last10_waku, finish3_cnt_last10_waku
+st_mean_last10_waku, st_std_last10_waku
+
+# 当該レースの実着（検証用・学習特徴には入れない）
+finish1_flag_cur, finish2_flag_cur, finish3_flag_cur
+```
+```bash
+data/processed/course_meta/course_run_YYYYMMDD-hhmmss.txt   # 期間・助走・窓長・件数などの実行メタ
+data/processed/course_meta/crash_report_*.txt / crash_rows_*.csv  # 失敗時のログ
 ```
 
 
