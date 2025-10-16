@@ -1,7 +1,18 @@
 # data フォルダ以下をすべて無視
 data/
+
 # 実行ログは管理対象外
 /logs/
+
 # Python cache
 __pycache__/
 *.pyc
+
+# --- Vault の復元成果物（追跡不要） ---
+/restore_q3/
+/restore_*/
+
+# --- ルート直下に置いたSQLiteファイル一式も無視（任意） ---
+/*.sqlite
+/*.sqlite-wal
+/*.sqlite-shm
