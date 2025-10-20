@@ -40,6 +40,7 @@ SCRIPTS = {
     "build_live_row":  os.path.join("scripts", "build_live_row.py"),
     "predict_one_race": os.path.join("scripts", "predict_one_race.py"),
     "preprocess_course": os.path.join("scripts", "preprocess_course.py"),
+    "preprocess_sectional": os.path.join("scripts", "preprocess_sectional.py"),
 }
 
 # ====== ユーティリティ ======
@@ -219,8 +220,24 @@ class Runner:
             "--warmup-days", str(DEFAULT_WARMUP_DAYS),
             "--n-last",       str(DEFAULT_N_LAST),
         ]
+        
         rc = self._run_and_stream(cmd_pc, cwd=repo_root)
         if rc != 0 or self.stop_flag.is_set(): return
+
+        # 3.6) 節間（sectional）列を live CSV に上書き付与（当日raceinfoが空でも必須列はNaNで保証）
+        cmd_ps = [
+            sys.executable,
+            (SCRIPTS["preprocess_sectional"] if "SCRIPTS" in globals() and "preprocess_sectional" in SCRIPTS
+             else os.path.join("scripts", "preprocess_sectional.py")),
+            "--master", in_csv,
+            "--raceinfo-dir", os.path.join("data", "processed", "raceinfo"),
+            "--date", date_yyyymmdd,        # 単日
+            "--live-html-root", os.path.join("data","live","html"),  # ← 追加
+            "--out", in_csv                 # 同じCSVに上書き
+        ]
+        rc = self._run_and_stream(cmd_ps, cwd=repo_root)
+        if rc != 0 or self.stop_flag.is_set():
+            return
 
         # 4) モデルDIR（未指定なら models/<approach>/latest）
         if not model_dir:
