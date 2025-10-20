@@ -138,6 +138,18 @@ def main():
     ids = df_sorted[ID_COLS].astype(str, errors="ignore") if set(ID_COLS).issubset(df_sorted.columns) else pd.DataFrame()
     used = df_sorted.drop(columns=[c for c in (ID_COLS + LEAK_COLS + [TARGET]) if c in df_sorted.columns]).copy()
 
+    # [ADD] sectional の核10列は数値として強制取り込み（文字列混入の保険）
+    SECTIONAL_FORCE_NUM = [
+        "ST_mean_current","ST_rank_current","ST_previous_time",
+        "score","score_rate",
+        "ranking_point_sum","ranking_point_rate",
+        "condition_point_sum","condition_point_rate",
+        "race_ct_current",
+    ]
+    _exist = [c for c in SECTIONAL_FORCE_NUM if c in used.columns]
+    if _exist:
+        used[_exist] = used[_exist].apply(pd.to_numeric, errors="coerce")
+
     # --- 列選択: 数値 / カテゴリ ---
     # 1) 数値は全部（prior列を含む）
     NUM_COLS: List[str] = [c for c in used.columns if is_numeric_dtype(used[c])]
@@ -151,7 +163,10 @@ def main():
     DROP_FEATS = [
         "origin","team","parts_exchange","title","schedule","timetable",
         "precondition_1","precondition_2","propeller",
-        "weather", "place"  # ← 明示的に除外
+        "weather", "place",  # ← 明示的に除外
+        # [ADD] sectional 由来で今回使わない列（多重共線/高カーデ/重複気味）
+        "ST_timing","boat_color","entry_history","rank_history",
+        "ranking_point","condition_point",        
     ]
     MAX_CAT_CARD = 50
 

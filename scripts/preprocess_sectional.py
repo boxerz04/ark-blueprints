@@ -1,170 +1,199 @@
 # scripts/preprocess_sectional.py
-# -*- coding: utf-8 -*-
-"""
-master と raceinfo を結合して「節内（sectional）モデル」用の master_sectional.csv を生成するスクリプト。
-
-■ 使い方
-# 単日
-python scripts/preprocess_sectional.py --date 2025-08-24
-# 期間
-python scripts/preprocess_sectional.py --start-date 2025-08-01 --end-date 2025-08-31
-# 全日（raceinfo_*.csv を全部）
-python scripts/preprocess_sectional.py
-# 出力先を変える
-python scripts/preprocess_sectional.py --out data/processed/sectional/master_sectional.csv
-"""
-
-from __future__ import annotations
-
-import os
-import sys
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+# -----------------------------------------------------------------------------
+# master（または live）CSV に「節間（raceinfo）由来の列」を“上書き付与”するスクリプト
+# 役割:
+#   - (race_id, player_id) をキーに many-to-one LEFT JOIN
+#   - 既存列は壊さず、新規列のみを追加（同名は master 優先で raceinfo 側を捨てる）
+#   - 結果列（*_flag_cur 等のリーク列）は結合前に強制除外
+#   - 主キーは最初から文字列で読み込み、DtypeWarning を回避
+#
+# 使い方（学習・期間指定）:
+#   python scripts/preprocess_sectional.py \
+#     --master data/processed/master.csv \
+#     --raceinfo-dir data/processed/raceinfo \
+#     --start-date 2024-12-01 --end-date 2025-09-30 \
+#     --out data/processed/master.csv
+#
+# 使い方（推論・単日）:
+#   python scripts/preprocess_sectional.py \
+#     --master data/live/raw_YYYYMMDD_JCD_R.csv \
+#     --raceinfo-dir data/processed/raceinfo \
+#     --date 2025-10-20 \
+#     --out data/live/raw_YYYYMMDD_JCD_R.csv
+# -----------------------------------------------------------------------------
 
 import argparse
-import glob
-import re
-from datetime import datetime, timedelta
-from typing import Iterable, List, Optional
-
+from pathlib import Path
+from typing import Iterable, List, Optional, Tuple
 import pandas as pd
 
-# ====== デフォルトパス ===============================================================
-MASTER_PATH_DEFAULT   = "data/processed/master.csv"
-RACEINFO_DIR_DEFAULT  = "data/processed/raceinfo"
-OUT_PATH_DEFAULT      = "data/processed/sectional/master_sectional.csv"
+# ====== CLI ===================================================================
+def parse_args():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--master", default="data/processed/master.csv")
+    ap.add_argument("--raceinfo-dir", default="data/processed/raceinfo")
+    g = ap.add_mutually_exclusive_group(required=True)
+    g.add_argument("--date", help="YYYY-MM-DD")
+    g.add_argument("--start-date", help="YYYY-MM-DD")
+    ap.add_argument("--end-date", help="YYYY-MM-DD")
+    ap.add_argument("--out", default="data/processed/master.csv")
+    return ap.parse_args()
 
-# ====== sectional で “即使う” 列（raceinfo 側） ======================================
-USE_COLS_RACEINFO = [
-    "player_id", "race_id",
-    "ST_mean_current", "ST_rank_current", "ST_previous_time",
-    "score", "score_rate",
-    "ranking_point_sum", "ranking_point_rate",
-    "condition_point_sum", "condition_point_rate",
-    "race_ct_current",  # ← 追加採用
-]
+# ====== Helpers ================================================================
+def _to_datetime(s: pd.Series) -> pd.Series:
+    return pd.to_datetime(s, errors="coerce")
 
-# ====== ユーティリティ ================================================================
-def yyyymmdd(s: str) -> str:
-    """YYYYMMDD or YYYY-MM-DD を YYYYMMDD に正規化。"""
-    s = s.strip()
-    if re.fullmatch(r"\d{8}", s):
-        return s
-    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
-        return s.replace("-", "")
-    raise argparse.ArgumentTypeError("日付は YYYYMMDD か YYYY-MM-DD で指定してください")
-
-def iter_dates(start: str, end: str) -> Iterable[str]:
-    """YYYYMMDD の範囲を両端含めて日次で列挙。"""
-    s = datetime.strptime(start, "%Y%m%d"); e = datetime.strptime(end, "%Y%m%d")
-    if s > e:
-        raise SystemExit("[ERROR] --start-date は --end-date 以前である必要があります")
-    cur = s
-    while cur <= e:
-        yield cur.strftime("%Y%m%d")
-        cur += timedelta(days=1)
-
-def _ensure_parent_dir(path: str) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-
-def _load_raceinfo_for_range(dirpath: str, date: Optional[str], start: Optional[str], end: Optional[str]) -> pd.DataFrame:
-    """
-    raceinfo_YYYYMMDD*.csv を単日/期間/全日で集めて縦結合し、必要列だけに絞って返す。
-    同一 (player_id, race_id) は後勝ちで1件化。
-    """
-    # パターン作成
-    patterns: List[str] = []
+def _date_range(date: Optional[str], start: Optional[str], end: Optional[str]) -> Tuple[pd.Timestamp, pd.Timestamp]:
     if date:
-        d = yyyymmdd(date); patterns = [os.path.join(dirpath, f"raceinfo_{d}*.csv")]
-    elif start and end:
-        s = yyyymmdd(start); e = yyyymmdd(end)
-        for d in iter_dates(s, e):
-            patterns.append(os.path.join(dirpath, f"raceinfo_{d}*.csv"))
-    else:
-        patterns = [os.path.join(dirpath, "raceinfo_*.csv")]
+        d = pd.to_datetime(date)
+        return d.normalize(), d.normalize()
+    if start is None or end is None:
+        raise ValueError("When --date is not given, both --start-date and --end-date are required.")
+    return pd.to_datetime(start).normalize(), pd.to_datetime(end).normalize()
 
-    # 実在ファイル列挙
-    paths: List[str] = []
-    for pat in patterns:
-        paths.extend(sorted(glob.glob(pat)))
+def _list_csvs(root: Path) -> List[Path]:
+    return sorted([p for p in root.rglob("*.csv") if p.is_file()])
+
+def _safe_read_csv(path: Path, key_dtypes=True) -> Optional[pd.DataFrame]:
+    try:
+        if key_dtypes:
+            df = pd.read_csv(path, low_memory=False, dtype={"race_id": "string", "player_id": "string"})
+        else:
+            df = pd.read_csv(path, low_memory=False)
+        return df
+    except Exception as e:
+        print(f"[WARN] skip read: {path} err={e}")
+        return None
+
+# ====== Core ==================================================================
+def load_raceinfo(dir_path: Path, start_ts: pd.Timestamp, end_ts: pd.Timestamp) -> pd.DataFrame:
+    """
+    raceinfo ディレクトリ配下の CSV を読み、date 列（or yyyymmdd 列）が範囲に入るものだけに絞る。
+    date 列が無い場合はファイル名から YYYYMMDD を推測（best-effort）。
+    """
+    paths = _list_csvs(dir_path)
     if not paths:
-        print("[WARN] raceinfo CSV が見つかりませんでした:", patterns)
-        return pd.DataFrame(columns=USE_COLS_RACEINFO)
+        print(f"[INFO] no raceinfo csv under: {dir_path}")
+        return pd.DataFrame(columns=["race_id","player_id"])
 
-    # 読み込み＋必要列抽出
-    frames: List[pd.DataFrame] = []
+    out_frames: List[pd.DataFrame] = []
     for p in paths:
-        try:
-            df = pd.read_csv(p)
-        except Exception as e:
-            print(f"[WARN] 読み込み失敗: {p} ({e})")
+        df = _safe_read_csv(p, key_dtypes=True)
+        if df is None or df.empty:
             continue
-        keep = [c for c in USE_COLS_RACEINFO if c in df.columns]
-        if not keep:
-            print(f"[WARN] 必要列が見当たりません: {p}")
-            continue
-        frames.append(df[keep])
 
-    if not frames:
-        return pd.DataFrame(columns=USE_COLS_RACEINFO)
+        # 日付列の解釈（date or yyyymmdd）
+        date_col = None
+        for cand in ("date", "yyyymmdd", "race_date"):
+            if cand in df.columns:
+                date_col = cand
+                break
 
-    rf = pd.concat(frames, ignore_index=True)
+        # ファイル単位の粗フィルタ（date 列が無い場合はファイル名から推測）
+        keep_df = True
+        if date_col:
+            dt = _to_datetime(df[date_col])
+            mask = (dt >= start_ts) & (dt <= end_ts)
+            df = df.loc[mask].copy()
+            keep_df = not df.empty
+        else:
+            # ファイル名から YYYYMMDD を拾う（見つからなければ採用）
+            name = p.stem
+            ymd = None
+            for token in name.replace("-", "_").split("_"):
+                if token.isdigit() and len(token) == 8:
+                    try:
+                        ymd = pd.to_datetime(token)
+                        break
+                    except Exception:
+                        pass
+            if ymd is not None:
+                keep_df = (ymd >= start_ts) and (ymd <= end_ts)
 
-    # join 安定化（キーを文字列に）
-    for k in ("player_id", "race_id"):
-        if k in rf.columns:
-            rf[k] = rf[k].astype(str)
+        if keep_df and not df.empty:
+            out_frames.append(df)
 
-    # 後勝ち重複排除
-    rf = rf.drop_duplicates(subset=["player_id", "race_id"], keep="last")
-    return rf
+    if not out_frames:
+        print(f"[INFO] raceinfo matched 0 rows in {dir_path} by date range {start_ts.date()}..{end_ts.date()}")
+        return pd.DataFrame(columns=["race_id","player_id"])
 
-# ====== メイン =======================================================================
+    ri = pd.concat(out_frames, axis=0, ignore_index=True)
+
+    # 主キーの整備（文字列・strip）
+    for k in ("race_id","player_id"):
+        if k in ri.columns:
+            ri[k] = ri[k].astype("string").str.strip()
+
+    # リーク列（結果）を強制 drop
+    LEAK_DROP = ["finish1_flag_cur","finish2_flag_cur","finish3_flag_cur"]
+    ri = ri.drop(columns=[c for c in LEAK_DROP if c in ri.columns], errors="ignore")
+
+    # many-to-one 化（重複キーは最後勝ち）
+    if "race_id" in ri.columns and "player_id" in ri.columns:
+        ri = ri.drop_duplicates(subset=["race_id","player_id"], keep="last")
+
+    return ri
+
 def main():
-    ap = argparse.ArgumentParser(description="Preprocess for SECTIONAL model (merge master with raceinfo)")
-    ap.add_argument("--master", default=MASTER_PATH_DEFAULT, help="master.csv のパス")
-    ap.add_argument("--raceinfo-dir", default=RACEINFO_DIR_DEFAULT, help="raceinfo 日次CSVのディレクトリ")
-    g = ap.add_mutually_exclusive_group()
-    g.add_argument("--date", type=yyyymmdd, help="単日 (YYYYMMDD or YYYY-MM-DD)")
-    g.add_argument("--start-date", type=yyyymmdd, help="期間開始 (YYYYMMDD or YYYY-MM-DD)")
-    ap.add_argument("--end-date", type=yyyymmdd, help="期間終了 (YYYYMMDD or YYYY-MM-DD)")
-    ap.add_argument("--out", default=OUT_PATH_DEFAULT, help="出力 CSV パス")
-    args = ap.parse_args()
+    args = parse_args()
+    master_path = Path(args.master)
+    out_path    = Path(args.out)
+    ri_root     = Path(args.raceinfo_dir)
 
-    _ensure_parent_dir(args.out)
+    start_ts, end_ts = _date_range(args.date, args.start_date, args.end_date)
+    print(f"[INFO] master : {master_path}")
+    print(f"[INFO] raceinfo: {ri_root}")
+    print(f"[INFO] period  : {start_ts.date()} .. {end_ts.date()} (inclusive)")
 
-    # 1) master 読み込み
-    if not os.path.exists(args.master):
-        raise SystemExit(f"[ERROR] master が見つかりません: {args.master}")
-    master = pd.read_csv(args.master)
+    # master を“最初から文字列 dtype”で読み、警告を抑止
+    master = pd.read_csv(
+        master_path,
+        low_memory=False,
+        dtype={"race_id": "string", "player_id": "string"}
+    )
+    before_rows, before_cols = master.shape
+    print(f"[INFO] master shape: {master.shape}")
 
-    # 必要キー確認
-    for k in ["player_id", "race_id"]:
+    # キーの整備
+    for k in ("race_id","player_id"):
         if k not in master.columns:
-            raise SystemExit(f"[ERROR] master に {k} がありません: {args.master}")
+            raise RuntimeError(f"missing key column in master: {k}")
+        master[k] = master[k].astype("string").str.strip()
 
-    # 2) raceinfo 読み込み（単日/期間/全日）
-    raceinfo = _load_raceinfo_for_range(args.raceinfo_dir, args.date, args.start_date, args.end_date)
+    # raceinfo 読み込み
+    ri = load_raceinfo(ri_root, start_ts, end_ts)
+    print(f"[INFO] raceinfo shape: {ri.shape}")
 
-    # 3) 型整形（join 安定化）
-    master["player_id"] = master["player_id"].astype(str)
-    master["race_id"]   = master["race_id"].astype(str)
-    if not raceinfo.empty:
-        raceinfo["player_id"] = raceinfo["player_id"].astype(str)
-        raceinfo["race_id"]   = raceinfo["race_id"].astype(str)
+    if ri.empty:
+        # 追加なしでそのまま出力
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        master.to_csv(out_path, index=False, encoding="utf-8-sig")
+        print(f"[OK] wrote: {out_path} rows={master.shape[0]} cols={master.shape[1]} (no raceinfo to attach)")
+        return
 
-    # 4) LEFT JOIN
-    merged = master.merge(raceinfo, on=["player_id", "race_id"], how="left")
+    # 結合キー確認
+    if not {"race_id","player_id"}.issubset(ri.columns):
+        print("[WARN] raceinfo has no keys (race_id, player_id). nothing to attach.")
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        master.to_csv(out_path, index=False, encoding="utf-8-sig")
+        print(f"[OK] wrote: {out_path} rows={master.shape[0]} cols={master.shape[1]} (unchanged)")
+        return
 
-    # 5) 数値カラムの型を数値化（存在する列のみ）
-    numeric_cols = [c for c in USE_COLS_RACEINFO
-                    if c not in ("player_id", "race_id", "ST_previous_time")]
-    for c in numeric_cols:
-        if c in merged.columns:
-            merged[c] = pd.to_numeric(merged[c], errors="coerce")
+    # 既存列と衝突する列は raceinfo 側を落として“新規列のみ”採用
+    key_cols = {"race_id","player_id"}
+    ri_add_cols = [c for c in ri.columns if c not in key_cols and c not in master.columns]
+    ri_small = ri[list(key_cols) + ri_add_cols].copy()
 
-    # 6) 保存
-    merged.to_csv(args.out, index=False, encoding="utf_8_sig")
-    print(f"[OK] wrote: {args.out} rows={len(merged)} cols={len(merged.columns)}")
+    # LEFT JOIN（many_to_one を期待）
+    before_set = set(master.columns)
+    merged = master.merge(ri_small, on=["race_id","player_id"], how="left", validate="many_to_one")
+    added_cols = sorted(list(set(merged.columns) - before_set))
+
+    # 保存
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    merged.to_csv(out_path, index=False, encoding="utf-8-sig")
+    print(f"[OK] wrote: {out_path} rows={merged.shape[0]} cols={merged.shape[1]}")
+    print(f"[OK] added_cols: {len(added_cols)} -> {', '.join(added_cols[:20])}{' ...' if len(added_cols)>20 else ''}")
 
 if __name__ == "__main__":
     main()

@@ -1,51 +1,66 @@
-# batch/train_base_from_master.ps1  (ASCII-safe)
+# batch/train_base_from_master.ps1
+# -----------------------------------------------------------------------------
+# master.csv（既に prior + course + sectional を上書き済み）から
+# Base モデル用の特徴量作成 → 学習 → メタの要約表示までを行うスクリプト
+#
+# 例：
+#   powershell -NoProfile -ExecutionPolicy Bypass -File ".\batch\train_base_from_master.ps1" `
+#     -VersionTag "v1.3.0-base-20251020" `
+#     -Notes "prior+course+sectional 全部盛り（sectional採用10列）"
+# -----------------------------------------------------------------------------
+
 param(
-  [string]$RepoRoot = "",
-  [string]$PythonPath = "C:\anaconda3\python.exe",
+  [string]$RepoRoot    = "",
+  [string]$PythonPath  = "C:\anaconda3\python.exe",
 
-  # master.csv を既に build_master_range.ps1 で作成済みと想定
-  [string]$MasterPath   = "data\processed\master.csv",
+  # 入出力
+  [string]$MasterCsv   = "data\processed\master.csv",
+  [string]$BaseOutDir  = "data\processed\base",
+  [string]$PipelineDir = "models\base\latest",
 
-  # 出力先（preprocess_base_features.py / train.py に準拠）
-  [string]$BaseOutDir   = "data\processed\base",
-  [string]$PipelineDir  = "models\base\latest",
-
-  # 学習設定（train.py に準拠）
-  [int]$NEstimators = 400,
-  [double]$LearningRate = 0.05,
-  [int]$NumLeaves = 63,
-  [double]$Subsample = 0.8,
-  [double]$ColsampleByTree = 0.8,
-  [int]$RandomState = 42,
-  [int]$NJobs = -1,
-
-  # メタ情報
-  [string]$VersionTag = "",
+  # 学習メタ
+  [Parameter(Mandatory=$true)][string]$VersionTag,
   [string]$Notes = ""
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+function Ensure-ParentDir([string]$path) {
+  $parent = Split-Path -Parent $path
+  if ($parent -and -not (Test-Path $parent)) { New-Item -ItemType Directory -Path $parent | Out-Null }
+}
+
+# RepoRoot 未指定ならこのファイルの親ディレクトリの上をルートに
 if (-not $RepoRoot -or $RepoRoot.Trim() -eq "") {
   $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 }
 
+# Python 実行確認
 if (-not (Test-Path $PythonPath)) {
-  Write-Host "WARN: PythonPath not found: $PythonPath -> fallback to 'python'"
+  Write-Host "WARN  PythonPath not found: $PythonPath -> fallback to 'python'"
   $PythonPath = "python"
 }
 
-# パス解決
-$MasterFull   = Join-Path $RepoRoot $MasterPath
+# フルパス
+$MasterFull   = Join-Path $RepoRoot $MasterCsv
 $BaseOutFull  = Join-Path $RepoRoot $BaseOutDir
 $PipelineFull = Join-Path $RepoRoot $PipelineDir
 
 # スクリプト検出
-$prep_base_py = Join-Path $RepoRoot "scripts\preprocess_base_features.py"
-$train_py     = Join-Path $RepoRoot "scripts\train.py"
-if (-not (Test-Path $prep_base_py)) { throw "scripts\preprocess_base_features.py not found." }
-if (-not (Test-Path $train_py))     { throw "scripts\train.py not found." }
+$prep_base_py = $null
+foreach ($c in @("scripts\preprocess_base_features.py","preprocess_base_features.py")) {
+  $p = Join-Path $RepoRoot $c
+  if (Test-Path $p) { $prep_base_py = $p; break }
+}
+if (-not $prep_base_py) { throw "preprocess_base_features.py not found under repo." }
+
+$train_py = $null
+foreach ($c in @("scripts\train.py","train.py")) {
+  $p = Join-Path $RepoRoot $c
+  if (Test-Path $p) { $train_py = $p; break }
+}
+if (-not $train_py) { throw "train.py not found under repo." }
 
 Write-Host "INFO RepoRoot     : $RepoRoot"
 Write-Host "INFO Python       : $PythonPath"
@@ -53,61 +68,68 @@ Write-Host "INFO master.csv   : $MasterFull"
 Write-Host "INFO base out dir : $BaseOutFull"
 Write-Host "INFO pipeline dir : $PipelineFull"
 
-if (-not (Test-Path $MasterFull)) { throw "master.csv not found at $MasterFull" }
-
-# Step A) 特徴量前処理（X, y, ids, feature_pipeline.pkl を生成）
-New-Item -ItemType Directory -Force -Path $BaseOutFull  | Out-Null
-New-Item -ItemType Directory -Force -Path $PipelineFull | Out-Null
-
-$argvA = @(
+# -----------------------------------------------------------------------------
+# Step 1) Base 用 特徴量作成（feature_pipeline.pkl も出力）
+# -----------------------------------------------------------------------------
+$argv1 = @(
   $prep_base_py,
   "--master", $MasterFull,
   "--out-dir", $BaseOutFull,
   "--pipeline-dir", $PipelineFull
 )
-
 Push-Location $RepoRoot
-try {
-  & $PythonPath @argvA
-  if ($LASTEXITCODE -ne 0) { throw "preprocess_base_features.py exited with code $LASTEXITCODE" }
-}
-finally { Pop-Location }
+& $PythonPath @argv1
+if ($LASTEXITCODE -ne 0) { Pop-Location; throw "preprocess_base_features.py exited with code $LASTEXITCODE" }
+Pop-Location
 Write-Host "OK  base features prepared."
 
-# Step B) 学習（approach=base）
-if (-not $VersionTag -or $VersionTag.Trim() -eq "") { $VersionTag = "base_from_master" }
-if (-not $Notes -or $Notes.Trim() -eq "") { $Notes = "Train base from existing master.csv" }
-
-$argvB = @(
+# -----------------------------------------------------------------------------
+# Step 2) 学習（approach=base）
+# -----------------------------------------------------------------------------
+$argv2 = @(
   $train_py,
   "--approach", "base",
-  "--n-estimators", $NEstimators,
-  "--learning-rate", $LearningRate,
-  "--num-leaves", $NumLeaves,
-  "--subsample", $Subsample,
-  "--colsample-bytree", $ColsampleByTree,
-  "--random-state", $RandomState,
-  "--n-jobs", $NJobs,
   "--version-tag", $VersionTag,
   "--notes", $Notes
 )
-
 Push-Location $RepoRoot
-try {
-  & $PythonPath @argvB
-  if ($LASTEXITCODE -ne 0) { throw "train.py exited with code $LASTEXITCODE" }
-}
-finally { Pop-Location }
+& $PythonPath @argv2
+if ($LASTEXITCODE -ne 0) { Pop-Location; throw "train.py exited with code $LASTEXITCODE" }
+Pop-Location
 Write-Host "OK  training finished."
 
-# 仕上げ：最新メタを表示
+# -----------------------------------------------------------------------------
+# Step 3) メタ読み込み（UTF-8 明示）＆ 要約表示
+#   - models/base/latest/train_meta.json を優先
+#   - 無ければ runs 下の最新を探す
+# -----------------------------------------------------------------------------
 $latestMeta = Join-Path $RepoRoot "models\base\latest\train_meta.json"
-if (Test-Path $latestMeta) {
-  $m = Get-Content $latestMeta -Raw | ConvertFrom-Json
-  $e = $m.eval
-  Write-Host ("EVAL auc={0} pr_auc={1} logloss={2} acc={3} mcc={4} top2_hit={5}" -f `
-    $e.auc, $e.pr_auc, $e.logloss, $e.accuracy, $e.mcc, $e.top2_hit)
-  Write-Host "OK  artifacts -> models\base\latest  and  models\base\runs\$($m.model_id)"
-} else {
-  Write-Host "WARN: train_meta.json not found at $latestMeta"
+if (-not (Test-Path $latestMeta)) {
+  $runs = Get-ChildItem -Path (Join-Path $RepoRoot "models\base\runs") -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending
+  foreach ($r in $runs) {
+    $cand = Join-Path $r.FullName "train_meta.json"
+    if (Test-Path $cand) { $latestMeta = $cand; break }
+  }
 }
+
+if (Test-Path $latestMeta) {
+  try {
+    # UTF-8 強制（日本語 notes の文字化け対策）
+    $jsonText = [System.IO.File]::ReadAllText($latestMeta, [System.Text.Encoding]::UTF8)
+    $m = $jsonText | ConvertFrom-Json
+  } catch {
+    # フォールバック
+    $m = Get-Content $latestMeta -Raw -Encoding UTF8 | ConvertFrom-Json
+  }
+
+  Write-Host "OK  latest meta   : $latestMeta"
+  Write-Host ("ID/Tag            : {0} / {1}" -f $m.model_id, $m.version_tag)
+  Write-Host ("Rows/Feats        : {0} / {1}" -f $m.n_rows, $m.n_features)
+  if ($m.eval) {
+    Write-Host ("Eval(AUC/PR/LL)   : {0:N6} / {1:N6} / {2:N6}" -f $m.eval.auc, $m.eval.pr_auc, $m.eval.logloss)
+    Write-Host ("Acc/MCC/Top2Hit   : {0:N6} / {1:N6} / {2:N6}" -f $m.eval.accuracy, $m.eval.mcc, $m.eval.top2_hit)
+  }
+} else {
+  Write-Host "WARN latest train_meta.json not found. (models\base\latest or runs\*)"
+}
+
