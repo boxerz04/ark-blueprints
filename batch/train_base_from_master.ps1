@@ -5,8 +5,14 @@
 #
 # 例：
 #   powershell -NoProfile -ExecutionPolicy Bypass -File ".\batch\train_base_from_master.ps1" `
-#     -VersionTag "v1.3.0-base-20251020" `
-#     -Notes "prior+course+sectional 全部盛り（sectional採用10列）"
+#     -VersionTag "v1.3.1-base-20251124" `
+#     -Notes "prior: 20231001–20240930, train: 20241001–20251031, prior+course+sectional 全部盛り（sectional10列）"
+#
+#   # さらに base/latest の中身を models/finals/* にもコピーしたい場合
+#   powershell -NoProfile -ExecutionPolicy Bypass -File ".\batch\train_base_from_master.ps1" `
+#     -VersionTag "v1.3.2-base-20251124" `
+#     -Notes "..." `
+#     -ModelAlias "finals"
 # -----------------------------------------------------------------------------
 
 param(
@@ -20,7 +26,11 @@ param(
 
   # 学習メタ
   [Parameter(Mandatory=$true)][string]$VersionTag,
-  [string]$Notes = ""
+  [string]$Notes = "",
+
+  # 追加: base/latest を別名モデルとしても保存したい場合のエイリアス名
+  # 例）"finals" や "semi" など。空文字なら何もしない。
+  [string]$ModelAlias = ""
 )
 
 Set-StrictMode -Version Latest
@@ -28,7 +38,9 @@ $ErrorActionPreference = "Stop"
 
 function Ensure-ParentDir([string]$path) {
   $parent = Split-Path -Parent $path
-  if ($parent -and -not (Test-Path $parent)) { New-Item -ItemType Directory -Path $parent | Out-Null }
+  if ($parent -and -not (Test-Path $parent)) {
+    New-Item -ItemType Directory -Path $parent | Out-Null
+  }
 }
 
 # RepoRoot 未指定ならこのファイルの親ディレクトリの上をルートに
@@ -46,6 +58,10 @@ if (-not (Test-Path $PythonPath)) {
 $MasterFull   = Join-Path $RepoRoot $MasterCsv
 $BaseOutFull  = Join-Path $RepoRoot $BaseOutDir
 $PipelineFull = Join-Path $RepoRoot $PipelineDir
+
+Ensure-ParentDir $MasterFull
+Ensure-ParentDir $BaseOutFull
+Ensure-ParentDir $PipelineFull
 
 # スクリプト検出
 $prep_base_py = $null
@@ -67,6 +83,11 @@ Write-Host "INFO Python       : $PythonPath"
 Write-Host "INFO master.csv   : $MasterFull"
 Write-Host "INFO base out dir : $BaseOutFull"
 Write-Host "INFO pipeline dir : $PipelineFull"
+if ($ModelAlias -and $ModelAlias.Trim() -ne "") {
+  Write-Host "INFO ModelAlias   : $ModelAlias (base/latest を別名モデルとしてコピー保存)"
+} else {
+  Write-Host "INFO ModelAlias   : (なし)"
+}
 
 # -----------------------------------------------------------------------------
 # Step 1) Base 用 特徴量作成（feature_pipeline.pkl も出力）
@@ -102,6 +123,8 @@ Write-Host "OK  training finished."
 # Step 3) メタ読み込み（UTF-8 明示）＆ 要約表示
 #   - models/base/latest/train_meta.json を優先
 #   - 無ければ runs 下の最新を探す
+#   - ModelAlias が指定されていれば base/latest の中身を
+#     models/<ModelAlias>/<model_id>/ と models/<ModelAlias>/latest/ にコピー
 # -----------------------------------------------------------------------------
 $latestMeta = Join-Path $RepoRoot "models\base\latest\train_meta.json"
 if (-not (Test-Path $latestMeta)) {
@@ -129,7 +152,27 @@ if (Test-Path $latestMeta) {
     Write-Host ("Eval(AUC/PR/LL)   : {0:N6} / {1:N6} / {2:N6}" -f $m.eval.auc, $m.eval.pr_auc, $m.eval.logloss)
     Write-Host ("Acc/MCC/Top2Hit   : {0:N6} / {1:N6} / {2:N6}" -f $m.eval.accuracy, $m.eval.mcc, $m.eval.top2_hit)
   }
+
+  # ここから追加: base/latest の内容を ModelAlias 配下にもコピー
+  if ($ModelAlias -and $ModelAlias.Trim() -ne "") {
+    $aliasRoot   = Join-Path $RepoRoot ("models\" + $ModelAlias)
+    $aliasRunDir = Join-Path $aliasRoot $m.model_id
+    $aliasLatest = Join-Path $aliasRoot "latest"
+
+    New-Item -ItemType Directory -Force -Path $aliasRunDir  | Out-Null
+    New-Item -ItemType Directory -Force -Path $aliasLatest  | Out-Null
+
+    $baseLatestDir = Join-Path $RepoRoot "models\base\latest"
+    if (Test-Path $baseLatestDir) {
+      Get-ChildItem -Path $baseLatestDir | ForEach-Object {
+        Copy-Item $_.FullName -Destination (Join-Path $aliasRunDir $_.Name) -Force
+        Copy-Item $_.FullName -Destination (Join-Path $aliasLatest $_.Name) -Force
+      }
+      Write-Host ("OK  aliased copy  : models\{0}\{1} + latest" -f $ModelAlias, $m.model_id)
+    } else {
+      Write-Host "WARN base latest dir not found; alias copy skipped: $baseLatestDir"
+    }
+  }
 } else {
   Write-Host "WARN latest train_meta.json not found. (models\base\latest or runs\*)"
 }
-
