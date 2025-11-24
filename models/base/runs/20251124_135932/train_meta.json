@@ -1,8 +1,8 @@
 {
-  "model_id": "20251124_140329",
-  "created_at": "2025-11-24 14:03:29",
-  "version_tag": "v1.0.0-finals-20251124",
-  "notes": "優勝/準優/準優進出戦専用モデル",
+  "model_id": "20251124_135932",
+  "created_at": "2025-11-24 13:59:32",
+  "version_tag": "v1.3.3-base-20251124",
+  "notes": "train_model_from_master.ps1 動作テスト（base）",
   "git_commit": "807e627",
   "n_rows": 333474,
   "n_features": 159,
