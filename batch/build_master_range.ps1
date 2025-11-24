@@ -185,4 +185,32 @@ if (-not $SkipSectional) {
   Write-Host "OK    master.csv overwritten with sectional features."
 }
 
+# -----------------------------------------------------------------------------
+# Step 3) master.csv の列一覧を YAML にエクスポート（features/base.yaml）
+# -----------------------------------------------------------------------------
+$FeaturesDir = Join-Path $RepoRoot "features"
+if (-not (Test-Path $FeaturesDir)) {
+  New-Item -ItemType Directory -Force -Path $FeaturesDir | Out-Null
+}
+$BaseYaml = Join-Path $FeaturesDir "base.yaml"
+$ExportScript = Join-Path $RepoRoot "scripts\export_base_feature_yaml.py"
+
+if (Test-Path $ExportScript) {
+  Write-Host "INFO  Export base feature columns -> $BaseYaml"
+  $argvFeat = @(
+    $ExportScript,
+    "--master", $MasterFull,
+    "--out", $BaseYaml
+  )
+  Push-Location $RepoRoot
+  & $PythonPath @argvFeat
+  if ($LASTEXITCODE -ne 0) {
+    Pop-Location
+    throw "export_base_feature_yaml.py exited with code $LASTEXITCODE"
+  }
+  Pop-Location
+} else {
+  Write-Host "WARN  export_base_feature_yaml.py not found; skip base.yaml export."
+}
+
 Write-Host "DONE  All steps completed. Output: $MasterFull"
