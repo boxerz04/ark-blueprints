@@ -3,7 +3,7 @@
 
 """
 rankingmotor*.bin（実体はHTML）から
-1) motor_section_snapshot.csv（節スナップショット）
+1) motor_section_snapshot.csv（日次スナップショット）
 2) motor_id_map.csv（世代辞書）
 を一括生成する（スクリプトは1本、成果物は2つ）。
 
@@ -12,13 +12,21 @@ rankingmotor*.bin（実体はHTML）から
 
 出力:
 - motor_section_snapshot.csv
-  section_id, date, code, motor_number, motor_rank, time_zenken, motor_2rentai_rate
+  snapshot_id, date, code, motor_number, motor_rank, time_zenken, motor_2rentai_rate
+
+  IMPORTANT:
+  - snapshot_id は「節（開催期間）」の section_id ではありません。
+  - これは rankingmotor の「前検日」基準スナップショットから生成する
+    (date, code) の日次IDです。
+  - raw 側の正規 section_id（schedule開始日ベース）と混同・衝突しないよう、
+    本スクリプトでは section_id 列を完全に廃止しました。
 
 - motor_id_map.csv
   code, motor_number, idx_motor, motor_id, effective_from, effective_to
   effective_to は次の effective_from の前日。最後は NaT（以後有効）を意味する。
 
-重要変更（今回）:
+重要変更:
+- 「紛らわしい section_id」を完全削除（snapshot_id のみ）
 - 交換候補検出のデフォルトを transition ON に変更
   - デフォルト: use_transition=True（>0 -> 0 の変化点のみを候補にする）
   - 無効化したい場合: --no_use_transition を指定する
@@ -113,6 +121,11 @@ def _find_contains(cols: List[str], must: List[str], must_not: Optional[List[str
 def normalize_snapshot_table(df: pd.DataFrame, date_yyyymmdd: str, code_2: str) -> Optional[pd.DataFrame]:
     """
     1つの table を、必要列があれば正規化して返す。
+
+    rankingmotor は「前検日」基準のランキングであり、ここで作れるのは日次スナップショット。
+    raw 側の正規 section_id（schedule開始日ベース）とは一切関係がないため、
+    本スクリプトでは section_id 列を生成しない。
+
     必要列（最低限）:
       - モーター番号
       - モーター2連対率
@@ -148,7 +161,9 @@ def normalize_snapshot_table(df: pd.DataFrame, date_yyyymmdd: str, code_2: str) 
 
     out["date"] = pd.to_datetime(date_yyyymmdd, format="%Y%m%d", errors="coerce")
     out["code"] = int(code_2)
-    out["section_id"] = f"{date_yyyymmdd}_{code_2}"
+
+    # 日次スナップショットID（節ではない）
+    out["snapshot_id"] = f"{date_yyyymmdd}_{code_2}"
 
     def to_int(x):
         if pd.isna(x):
@@ -183,6 +198,17 @@ def normalize_snapshot_table(df: pd.DataFrame, date_yyyymmdd: str, code_2: str) 
 
     out = out.dropna(subset=["date", "motor_number"])
     out["motor_number"] = out["motor_number"].astype(int)
+
+    # 列順を固定（誤解しにくい順）
+    out = out[[
+        "snapshot_id",
+        "date",
+        "code",
+        "motor_number",
+        "motor_rank",
+        "time_zenken",
+        "motor_2rentai_rate",
+    ]]
 
     return out
 
@@ -249,6 +275,8 @@ def build_motor_section_snapshot_from_bins(
         )
 
     snap = pd.concat(snapshots, ignore_index=True)
+
+    # 日次スナップショットの粒度（date, code, motor_number）で重複排除
     snap.sort_values(["date", "code", "motor_number"], inplace=True)
     snap = snap.drop_duplicates(subset=["date", "code", "motor_number"], keep="first").reset_index(drop=True)
     return snap
@@ -388,7 +416,7 @@ def main():
     print("[DONE] Outputs saved")
     print(f"  snapshot: {args.out_snapshot_csv}")
     print(f"    rows: {len(snapshot)}")
-    print(f"    unique sections: {snapshot['section_id'].nunique()}")
+    print(f"    unique snapshot_id: {snapshot['snapshot_id'].nunique()}")
     print(f"    date range: {snapshot['date'].min().date()} ~ {snapshot['date'].max().date()}")
     print(f"  motor_id_map: {args.out_map_csv}")
     print(f"    rows (intervals): {len(motor_map)}")
