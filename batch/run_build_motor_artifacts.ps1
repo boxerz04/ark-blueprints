@@ -7,7 +7,7 @@ $ErrorActionPreference = "Stop"
 
 # ========= パス設定 =========
 $PROJECT_ROOT = "C:\Users\user\Desktop\Git\ark-blueprints"
-$PYTHON_EXE   = "python"
+$PYTHON_EXE   = "C:\anaconda3\python.exe"
 
 $SCRIPT_PATH  = "$PROJECT_ROOT\scripts\build_motor_artifacts_from_bins.py"
 
