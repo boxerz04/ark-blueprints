@@ -18,6 +18,7 @@ motor_section_base__all.csv から、節単位の派生特徴量（prev / mean /
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 from typing import List
 
@@ -43,6 +44,38 @@ def ensure_cols(df: pd.DataFrame, cols: List[str]) -> None:
     missing = [c for c in cols if c not in df.columns]
     if missing:
         raise ValueError(f"missing required columns: {missing}")
+
+
+# ★ 追加（最小）：id 正規化ユーティリティ
+def _normalize_motor_id(s: pd.Series) -> pd.Series:
+    # 11101 / 11101.0 / " 11101 " → "011101"
+    x = s.astype("string").str.strip()
+    x = x.str.replace(r"\.0$", "", regex=True)
+    x = x.str.replace(r"\D", "", regex=True)
+    x = x.replace("", pd.NA)
+    x = x.where(x.isna(), x.str.zfill(6))
+    return x
+
+
+def _normalize_section_id(s: pd.Series) -> pd.Series:
+    # 20240928_3 / 20240928-3 → 20240928_03
+    x = s.astype("string").str.strip()
+    x = x.str.replace("-", "_", regex=False)
+
+    pat = re.compile(r"^(\d{8})_(\d{1,2})$")
+
+    def _fix(v):
+        if v is None or v is pd.NA:
+            return pd.NA
+        v = str(v)
+        m = pat.match(v)
+        if not m:
+            return v
+        d, n = m.group(1), m.group(2)
+        return f"{d}_{int(n):02d}"
+
+    x = x.replace("", pd.NA).map(_fix)
+    return x
 
 
 # --------------------------------------------------
@@ -85,10 +118,13 @@ def main() -> int:
     mean_ns = sorted(set(mean_ns))
 
     print("[START] build_motor_section_features_n.py")
+    print(f"[DEBUG] script_path={Path(__file__).resolve()}")
+
     print(f"[INPUT] {in_path}")
     print(f"[OUTPUT] {out_path}")
     print(f"[CONF] mean_ns={mean_ns}")
 
+    # ★ 変更なし：読み込み
     df = pd.read_csv(in_path, low_memory=False)
     print(f"[INFO] rows={len(df):,} cols={len(df.columns)}")
 
@@ -117,8 +153,14 @@ def main() -> int:
     for c in value_cols:
         print(f"  - {c}")
 
-    # 日付型へ（並び順とQCで使う）
+    # ★ 追加（最小）：ここでだけ id 正規化
     df = df.copy()
+    df[args.motor_id_col] = _normalize_motor_id(df[args.motor_id_col])
+    df[args.section_id_col] = _normalize_section_id(df[args.section_id_col])
+    print("[DEBUG] motor_id head:", df[args.motor_id_col].head(5).tolist())
+
+
+    # 日付型へ（並び順とQCで使う）
     df[args.start_dt_col] = pd.to_datetime(df[args.start_dt_col], errors="coerce")
     df[args.end_dt_col] = pd.to_datetime(df[args.end_dt_col], errors="coerce")
 
@@ -144,7 +186,6 @@ def main() -> int:
     # --------------------------------------------------
     # rolling（mean/sum）: 必ず shift(1) の後に rolling
     # --------------------------------------------------
-    # 合計を作る対象（ct と sum 系）
     sum_cols = [
         "motor_race_ct",
         "motor_score_sum",
@@ -152,7 +193,6 @@ def main() -> int:
         "motor_condition_point_sum",
     ]
 
-    # 平均を作る対象（rate 系）
     mean_cols = [
         "motor_score_rate",
         "motor_ranking_point_rate",
@@ -161,14 +201,12 @@ def main() -> int:
 
     for n in mean_ns:
         print(f"[STEP] build prev{n}_sum / prev{n}_mean")
-        # sum（shift→rolling sum）
         for c in sum_cols:
             s = g[c].shift(1)
             df[f"prev{n}_sum_{c}"] = s.groupby(df[args.motor_id_col], sort=False).rolling(
                 window=n, min_periods=n
             ).sum().reset_index(level=0, drop=True)
 
-        # mean（shift→rolling mean）
         for c in mean_cols:
             s = g[c].shift(1)
             df[f"prev{n}_mean_{c}"] = s.groupby(df[args.motor_id_col], sort=False).rolling(
@@ -178,13 +216,11 @@ def main() -> int:
     # --------------------------------------------------
     # delta（方向性）
     # --------------------------------------------------
-    # フェーズ2では n=3,5 を想定。存在するものだけ作る。
     def has(col: str) -> bool:
         return col in df.columns
 
     print("[STEP] build delta (prev1 - mean)")
     for n in mean_ns:
-        # delta は mean_cols（rate系）と、必要なら sum_cols の rate換算も後で追加可能
         for c in mean_cols:
             mcol = f"prev{n}_mean_{c}"
             pcol = f"prev1_{c}"
@@ -195,7 +231,6 @@ def main() -> int:
     # --------------------------------------------------
     # 出力列の整理
     # --------------------------------------------------
-    # 基本列
     out_cols = [
         args.motor_id_col,
         args.section_id_col,
@@ -203,19 +238,15 @@ def main() -> int:
         args.end_dt_col,
     ] + value_cols
 
-    # prev1
     out_cols += [f"prev1_{c}" for c in value_cols]
 
-    # prevN sum/mean
     for n in mean_ns:
         out_cols += [f"prev{n}_sum_{c}" for c in sum_cols]
         out_cols += [f"prev{n}_mean_{c}" for c in mean_cols]
 
-    # delta
     for n in mean_ns:
         out_cols += [f"delta_1_{n}_{c}" for c in mean_cols if f"delta_1_{n}_{c}" in df.columns]
 
-    # 日付は出力で見やすく
     df[args.start_dt_col] = df[args.start_dt_col].dt.strftime("%Y-%m-%d")
     df[args.end_dt_col] = df[args.end_dt_col].dt.strftime("%Y-%m-%d")
 
