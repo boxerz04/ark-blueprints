@@ -14,6 +14,7 @@ scripts/build_live_row.py
 - 出力は 6 行（1～6艇）固定。race_id = YYYYMMDD + jcd2桁 + R2桁
 - 将来のラグ特徴用に、ライブ出力にも空列の `entry` / `is_wakunari` を追加（Int64, 全て NA）
 - 学習raw互換のため `wakuban`（枠番）を beforeinfo から作成（無い場合は1..6で補完）
+- 節ID（section_id）は schedule の開始日を優先して生成（build_raw_csv.py と同一仕様）。
 - 列順はデフォルトで data/raw/ の「最新 *_raw.csv」に自動整列（足りない列はNA追加・余分は削除）
 """
 
@@ -23,7 +24,7 @@ import re
 import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Tuple
 
 import numpy as np
 import pandas as pd
@@ -79,6 +80,55 @@ def normalize_yyyymmdd(s: str) -> str:
     if re.fullmatch(r"\d{8}", s):
         return s
     raise ValueError("--date は YYYYMMDD 形式で指定してください。")
+
+def compute_section_id_from_schedule(df: pd.DataFrame) -> Tuple[pd.Series, pd.Series]:
+    """
+    schedule の開始日を優先して section_id を作る（ベクトル化）。
+    section_id = <節開始日YYYYMMDD>_<場コード2桁>
+
+    schedule が欠損/壊れて開始日が取れない行は date にフォールバックする。
+    戻り値:
+      - section_id（Series[str]）
+      - fallback（Series[bool]）: dateフォールバックした行
+
+    NOTE:
+    - 日次raw（build_raw_csv.py）と **同一仕様**。
+    - 推論/ライブでも section_id を統一することで、motor_section_features の
+      (motor_id, section_id) JOIN が学習時と一致し、節途中日でも結合が崩れない。
+    """
+    # 必須列チェック
+    for col in ("date", "code", "schedule"):
+        if col not in df.columns:
+            raise KeyError(f"compute_section_id_from_schedule: 必須列 '{col}' がありません")
+
+    date_s = df["date"].astype(str).str.strip()
+    code2 = df["code"].astype(str).str.strip().str.zfill(2)
+    sched = df["schedule"].astype(str).str.strip()
+
+    m = sched.str.extract(r"^\s*(\d{1,2})/(\d{1,2})\s*-\s*(\d{1,2})/(\d{1,2})\s*$")
+    start_m = pd.to_numeric(m[0], errors="coerce")
+    start_d = pd.to_numeric(m[1], errors="coerce")
+
+    year = pd.to_numeric(date_s.str.slice(0, 4), errors="coerce")
+    proc_month = pd.to_numeric(date_s.str.slice(4, 6), errors="coerce")
+
+    fallback = start_m.isna() | start_d.isna() | year.isna()
+
+    # 年跨ぎ補正：処理日が1月/2月で、schedule開始月が12月なら前年開始
+    year_adj = year.copy()
+    mask_cross = (~fallback) & (proc_month.isin([1, 2])) & (start_m == 12)
+    year_adj.loc[mask_cross] = year_adj.loc[mask_cross] - 1
+
+    start_mm = start_m.fillna(1).astype(int).astype(str).str.zfill(2)
+    start_dd = start_d.fillna(1).astype(int).astype(str).str.zfill(2)
+    start_yyyymmdd = year_adj.fillna(0).astype(int).astype(str) + start_mm + start_dd
+
+    # フォールバックは date を使う
+    start_yyyymmdd = start_yyyymmdd.mask(fallback, date_s)
+
+    section_id = start_yyyymmdd + "_" + code2
+    return section_id, fallback
+
 
 def live_html_path(kind: str, date: str, jcd: Optional[str]=None, rno: Optional[str]=None) -> str:
     """ライブ用キャッシュファイルの保存パスを返す"""
@@ -688,8 +738,13 @@ def build_live_raw(date: str, jcd: str, rno: str, online: bool) -> pd.DataFrame:
         if missing_col not in raw.columns:
             raw[missing_col] = np.nan if missing_col not in ("winning_trick","henkan_ticket","remarks") else ""
 
-    # 節ID（日付主体）
-    raw["section_id"] = raw.apply(lambda row: f"{row.get('date','')}_{str(row.get('code','')).zfill(2)}", axis=1)
+    # 節ID（schedule開始日優先）
+    # - 日次raw（build_raw_csv.py）と同一仕様に揃える
+    # - schedule開始日が取れない場合のみ date にフォールバック
+    raw["section_id"], fallback = compute_section_id_from_schedule(raw)
+    fallback_n = int(pd.Series(fallback).sum())
+    if fallback_n:
+        print(f"[WARN] section_id: schedule開始日が取れず date にフォールバックした行数={fallback_n}")
 
     # 型の軽い正規化（数値っぽいものを数値化）
     numeric_guess_cols = ["age","weight","F","L","ST_mean","N_winning_rate","N_2rentai_rate","N_3rentai_rate",
