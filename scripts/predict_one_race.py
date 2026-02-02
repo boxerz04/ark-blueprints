@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import json
 from importlib import import_module
 from pathlib import Path
 from typing import Dict, List, Tuple, Optional
@@ -79,6 +80,50 @@ def parse_args() -> argparse.Namespace:
         help="進捗と要約の表示を抑止（ログを抑えたい場合に利用）",
     )
     return p.parse_args()
+
+
+def build_model_label(approach_arg: str, model_path: Path) -> str:
+    """表示用ラベルを生成する。
+
+    背景:
+      - GUI では "--approach base" のまま "--model models/finals/latest/model.pkl" のように
+        “approach と実際のモデル系列が不一致” になる運用があり得る。
+      - その場合でも、ログ上で **実際に読んだモデル** が判別できるようにする。
+
+    仕様:
+      1) model_path から models/<family>/... を推定できれば family を優先表示
+      2) model.pkl と同ディレクトリに train_meta.json があれば version_tag を併記
+      3) 最後にファイル名（model.pkl）を付与
+
+    例:
+      - finals v1.1.0-finals-20251231-motor_section:model.pkl
+      - base:model.pkl  （family推定不可/メタ無しのフォールバック）
+    """
+
+    # 1) models/<family>/... を推定（存在しない/異なる構造でも落ちない）
+    family = None
+    try:
+        parts = list(model_path.resolve().parts)
+        if "models" in parts:
+            i = parts.index("models")
+            if i + 1 < len(parts):
+                family = parts[i + 1]
+    except Exception:
+        family = None
+
+    # 2) train_meta.json（同階層）から version_tag を拾う
+    version_tag = None
+    try:
+        meta_path = model_path.parent / "train_meta.json"
+        if meta_path.exists():
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            version_tag = meta.get("version_tag")
+    except Exception:
+        version_tag = None
+
+    fam_txt = family if family else approach_arg
+    ver_txt = f" {version_tag}" if version_tag else ""
+    return f"{fam_txt}{ver_txt}:{model_path.name}"
 
 
 def load_adapter(approach: str):
@@ -179,6 +224,24 @@ def extract_feature_info(preprocessor) -> Tuple[List[str], List[str], List[str]]
     return num_cols, cat_cols, encoded
 
 
+def wrap_csv_line(items: List[str], indent: str = "", max_width: int = 110) -> List[str]:
+    """
+    items をカンマ区切りで“見やすく”折り返して返す（ASCII想定）。
+    """
+    out: List[str] = []
+    line = indent
+    for i, it in enumerate(items):
+        token = (", " if (i > 0) else "") + str(it)
+        if len(line) + len(token) > max_width:
+            out.append(line)
+            line = indent + str(it)
+        else:
+            line += token
+    if line.strip():
+        out.append(line)
+    return out
+
+
 def build_features_report_text(
     approach: str,
     stem: str,
@@ -194,12 +257,9 @@ def build_features_report_text(
     - Numeric / Categorical 入力列
     - OneHot 展開名を列ごとにグルーピング（place_, race_grade_ ...）
     """
-    # OneHot のグルーピング: {col_name: [category, ...]}
     grouped: Dict[str, List[str]] = {}
-    # 数値パススルーは A) に再掲する
     passthrough_numeric = list(num_cols)
 
-    # cat_cols について、encoded_names から "<col>_<category>" を抽出
     enc_set = list(encoded_names) if encoded_names else []
     for col in cat_cols:
         pref = f"{col}_"
@@ -210,7 +270,6 @@ def build_features_report_text(
         if cats:
             grouped[col] = cats
 
-    # テキスト整形（ASCIIのみを使用して cp932 でも落ちないように）
     lines: List[str] = []
     lines.append(f"# Features Report - {approach} ({stem})")
     lines.append(f"Model   : {model_path}")
@@ -236,14 +295,12 @@ def build_features_report_text(
     lines.append("")
     lines.append(f"[ENCODED FEATURES]  total={len(encoded_names)}")
     lines.append("")
-    # A) Passthrough numeric
     lines.append(f"A) Passthrough numeric ({len(passthrough_numeric)})")
     if passthrough_numeric:
         lines.extend(wrap_csv_line(passthrough_numeric, indent="  "))
     else:
         lines.append("  (none)")
     lines.append("")
-    # B..) OneHot per categorical（入力の cat_cols 順で安定表示）
     label_ord = list(cat_cols)
     for idx, label in enumerate(label_ord):
         cats = grouped.get(label, [])
@@ -257,35 +314,11 @@ def build_features_report_text(
     lines.append("-" * 80)
     lines.append("Notes:")
     lines.append('- OneHot は "学習時に出現したカテゴリのみ" が展開対象です (handle_unknown="ignore")。')
-    lines.append("  例: ステージ絞り込みにより未出現のカテゴリは列が生成されません。")
-    lines.append("- Numeric は StandardScaler を経由しています (列名はそのまま)。")
+    lines.append("  推論時に未知カテゴリが来ても列が増えず、該当カテゴリは全0になります。")
+    lines.append("")
     return "\n".join(lines)
 
 
-def wrap_csv_line(items: List[str], width: int = 80, indent: str = "") -> List[str]:
-    """
-    カンマ区切りの長いリストを可読性重視で改行整形するユーティリティ。
-    """
-    out: List[str] = []
-    line = indent
-    first = True
-    for it in items:
-        token = ("" if first else ", ") + str(it)
-        if len(line) + len(token) > width:
-            out.append(line)
-            line = indent + str(it)
-            first = False
-        else:
-            line += token
-            first = False
-    if line.strip():
-        out.append(line)
-    return out
-
-
-# -------------------------
-# 内部ユーティリティ（単体モデルの推論）
-# -------------------------
 def _predict_with_single_approach(
     approach: str,
     df_live_raw: pd.DataFrame,
@@ -294,22 +327,20 @@ def _predict_with_single_approach(
     quiet: bool,
     model_path_override: Optional[Path] = None,
     pipe_path_override: Optional[Path] = None,
-) -> Tuple[pd.DataFrame, pd.Series, Optional[str]]:
+):
     """
-    指定アプローチ（base または sectional）で単体推論し、(出力DF, probaシリーズ, ログ名) を返す。
-    - df_live_raw は live_csv を読み込んだ“そのまま”の6行（Adapter 内で各系列用に整形）
-    - id_cols は最終DFに含める候補（存在する列のみ採用）
+    base / sectional を「単体推論」するための内部関数。
+    - failure しても落とさず、呼び出し元が扱えるようにする（ensemble 用）
+    - ただし単体アプローチ指定時は main() が従来どおり落とす（後方互換のため）
     """
     adapter = load_adapter(approach)
     df_live = adapter.prepare_live_input(df_live_raw.copy(), PROJECT_ROOT)
 
-    # モデル／パイプラインのパス決定（latest 既定）
     base_dir = PROJECT_ROOT / "models" / approach / "latest"
     model_path = model_path_override if model_path_override else (base_dir / "model.pkl")
     pipe_path = pipe_path_override if pipe_path_override else (base_dir / "feature_pipeline.pkl")
 
     if not model_path.exists() or not pipe_path.exists():
-        # 見つからなければ空を返す（上位の ensemble でフォールバック）
         return df_live, pd.Series([float("nan")] * len(df_live)), None
 
     if not quiet:
@@ -325,11 +356,9 @@ def _predict_with_single_approach(
             y_hat = model.predict(X_live)
             proba = y_hat.astype("float64", copy=False)
         proba_s = pd.Series(proba, index=df_live.index, name=f"p_{approach}")
-        # 出力DF（ID列のみ拾う）
         cols = [c for c in id_cols if c in df_live.columns]
         out_df = df_live[cols].copy()
         model_label = f"{approach}:{model_path.name}"
-        # 単体モード時の features レポートは呼び出し元が実施
         return out_df, proba_s, model_label
     except Exception as e:
         if not quiet:
@@ -346,7 +375,6 @@ def main():
 
     # 2) ensemble 以外（= 従来の単体推論）は従来どおり
     if args.approach in ("base", "sectional"):
-        # 単体アプローチの従来フロー
         adapter = load_adapter(args.approach)
         df_live = adapter.prepare_live_input(df_live_raw.copy(), PROJECT_ROOT)
 
@@ -408,10 +436,20 @@ def main():
             print(f"[OK] saved predictions: {out_path}")
             show_cols = [c for c in ["race_id", "code", "R", "wakuban", "player", "proba"] if c in out_df.columns]
             summary = out_df.sort_values("proba", ascending=False)[show_cols].reset_index(drop=True)
-            model_name_for_log = f"{args.approach}:{model_path.name}"
-            with pd.option_context("display.max_rows", 50,
-                                   "display.width", 120,
-                                   "display.float_format", "{:,.4f}".format):
+
+            # NOTE:
+            #   GUI運用では --approach と --model の系列が異なることがある（例: approach=base だが finals の model.pkl を渡す）。
+            #   ログ表示で誤認しないよう、**実際に読んだ model_path** からラベルを作る。
+            model_name_for_log = build_model_label(args.approach, model_path)
+
+            with pd.option_context(
+                "display.max_rows",
+                50,
+                "display.width",
+                120,
+                "display.float_format",
+                "{:,.4f}".format,
+            ):
                 print(f"\n[SUMMARY] ({model_name_for_log}) prob(desc):")
                 print(summary.to_string(index=False))
             if "wakuban" in summary.columns:
@@ -461,9 +499,8 @@ def main():
 
         # 3-5) メタ特徴を生成
         X_meta, used_cols = build_meta_features(meta_df)
+
         # ★ここから追加：学習時の列順・列集合に合わせる
-        
-        import json
         meta_dir = PROJECT_ROOT / "models" / "ensemble" / "latest"
         with open(meta_dir / "meta_features.json", "r", encoding="utf-8") as f:
             meta_info = json.load(f)
@@ -473,7 +510,6 @@ def main():
         # ★ここまで追加
 
         # 3-6) メタモデルを読み込み（models/ensemble/latest/meta_model.pkl）
-        meta_dir = PROJECT_ROOT / "models" / "ensemble" / "latest"
         meta_model_path = meta_dir / "meta_model.pkl"
         if not meta_model_path.exists():
             sys.exit(f"[ERROR] meta_model not found: {meta_model_path}")
@@ -504,13 +540,22 @@ def main():
         # 3-10) ログ出力（簡潔）
         if not args.quiet:
             print(f"[OK] saved predictions: {out_path}")
-            show_cols = [c for c in ["race_id", "code", "R", "wakuban", "player", "p_base", "p_sectional", "proba"] if c in out_df.columns]
+            show_cols = [
+                c
+                for c in ["race_id", "code", "R", "wakuban", "player", "p_base", "p_sectional", "proba"]
+                if c in out_df.columns
+            ]
             summary = out_df.sort_values("proba", ascending=False)[show_cols].reset_index(drop=True)
             label_base = label_base or "base:NA"
             label_sec = label_sec or "sectional:NA"
-            with pd.option_context("display.max_rows", 50,
-                                   "display.width", 140,
-                                   "display.float_format", "{:,.4f}".format):
+            with pd.option_context(
+                "display.max_rows",
+                50,
+                "display.width",
+                140,
+                "display.float_format",
+                "{:,.4f}".format,
+            ):
                 print(f"\n[SUMMARY] (ensemble <- {label_base} + {label_sec}) prob(desc):")
                 print(summary.to_string(index=False))
             if "wakuban" in summary.columns:

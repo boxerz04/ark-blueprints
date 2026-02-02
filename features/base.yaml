@@ -1,7 +1,7 @@
-generated_at: '2026-01-26 10:28:24'
+generated_at: '2026-02-02 16:51:06'
 source_master: C:\Users\user\Desktop\Git\ark-blueprints\data\processed\master.csv
 n_rows: 381708
-n_cols: 162
+n_cols: 163
 columns:
 - player_id
 - AB_class
@@ -165,3 +165,4 @@ columns:
 - condition_point
 - condition_point_sum
 - condition_point_rate
+- motor_id

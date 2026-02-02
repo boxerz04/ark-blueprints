@@ -91,7 +91,7 @@ def main():
     print("[INFO] master shape :", df.shape)
 
     TARGET   = args.target
-    ID_COLS  = ["race_id", "player", "player_id", "motor_number", "boat_number", "section_id"]
+    ID_COLS  = ["race_id", "player", "player_id", "motor_id", "motor_number", "boat_number", "section_id"]
     LEAK_COLS = [
         "entry", "is_wakunari", "rank", "winning_trick", "remarks",
         "henkan_ticket", "ST", "ST_rank", "__source_file",

@@ -2,11 +2,15 @@
 # -----------------------------------------------------------------------------
 # 学習用 master.csv を作成し、course/sectional の特徴列を「上書き付与」するスクリプト
 # フロー: preprocess.py → preprocess_course.py(上書き) → preprocess_sectional.py(上書き)
+#      → preprocess_motor_id.py(上書き: motor_id付与)  ★追加
+#
 # 使い方（例）:
 #   powershell -NoProfile -ExecutionPolicy Bypass -File ".\batch\build_master_range.ps1" `
-#     -StartDate 20241201 -EndDate 20250930 -WarmupDays 180 -NLast 10
+#     -StartDate 20241001 -EndDate 20251231 -WarmupDays 180 -NLast 10
+#
 # オプション:
-#   -SkipCourse / -SkipSectional で各上書き付与をスキップ可能
+#   -SkipCourse / -SkipSectional / -SkipMotorId で各上書き付与をスキップ可能
+#
 # 備考:
 #   コンソール出力は ASCII のみ（文字化け対策）。コメントは日本語。
 # -----------------------------------------------------------------------------
@@ -39,7 +43,15 @@ param(
   [switch]$SkipCourse,
 
   # sectional 上書き付与の有無
-  [switch]$SkipSectional
+  [switch]$SkipSectional,
+
+  # ---------------------------------------------------------------------------
+  # ★追加: motor_id 付与（preprocess_motor_id.py）
+  # ---------------------------------------------------------------------------
+  [switch]$SkipMotorId,
+  [string]$MotorIdMapCsv = "data\processed\motor\motor_id_map__all.csv",
+  # miss_rate(%) の許容上限。学習側は原則 0.0 を推奨（欠損が出たら工程が壊れている）
+  [double]$MotorIdMaxMissRate = 0.0
 )
 
 Set-StrictMode -Version Latest
@@ -78,6 +90,9 @@ $PriorsFull     = Join-Path $RepoRoot $PriorsRoot
 $CourseReportsF = Join-Path $RepoRoot $CourseReports
 $RaceinfoFull   = Join-Path $RepoRoot $RaceinfoDir
 
+# ★追加: motor_id_map
+$MotorMapFull   = Join-Path $RepoRoot $MotorIdMapCsv
+
 Ensure-ParentDir $MasterFull
 Ensure-ParentDir $ReportsFull
 Ensure-ParentDir $CourseReportsF
@@ -104,6 +119,14 @@ foreach ($c in @("scripts\preprocess_sectional.py","preprocess_sectional.py")) {
 }
 if (-not $SkipSectional -and -not $sectional_py) { throw "preprocess_sectional.py not found." }
 
+# ★追加: preprocess_motor_id.py 検出
+$motor_id_py = $null
+foreach ($c in @("scripts\preprocess_motor_id.py","preprocess_motor_id.py")) {
+  $p = Join-Path $RepoRoot $c
+  if (Test-Path $p) { $motor_id_py = $p; break }
+}
+if (-not $SkipMotorId -and -not $motor_id_py) { throw "preprocess_motor_id.py not found." }
+
 Write-Host  "INFO  RepoRoot     : $RepoRoot"
 Write-Host  "INFO  Python       : $PythonPath"
 Write-Host  "INFO  Period       : $StartIso .. $EndIso"
@@ -115,6 +138,14 @@ Write-Host  "INFO  CourseReport : $CourseReportsF"
 Write-Host  "INFO  RaceinfoDir  : $RaceinfoFull"
 Write-Host  "INFO  CourseStep   : " -NoNewline; if ($SkipCourse) { Write-Host "SKIPPED" } else { Write-Host "ENABLED (WarmupDays=$WarmupDays, NLast=$NLast)" }
 Write-Host  "INFO  SectionalStep: " -NoNewline; if ($SkipSectional) { Write-Host "SKIPPED" } else { Write-Host "ENABLED" }
+
+# ★追加: motor_id ステップの表示
+Write-Host  "INFO  MotorIdStep  : " -NoNewline
+if ($SkipMotorId) {
+  Write-Host "SKIPPED"
+} else {
+  Write-Host "ENABLED (Map=$MotorMapFull, MaxMissRate=$MotorIdMaxMissRate)"
+}
 
 # -----------------------------------------------------------------------------
 # Step 1) master.csv 生成（preprocess.py）
@@ -183,6 +214,33 @@ if (-not $SkipSectional) {
   if ($LASTEXITCODE -ne 0) { Pop-Location; throw "preprocess_sectional.py exited with code $LASTEXITCODE" }
   Pop-Location
   Write-Host "OK    master.csv overwritten with sectional features."
+}
+
+# -----------------------------------------------------------------------------
+# Step 2.75) ★追加: motor_id を master.csv に上書き付与（preprocess_motor_id.py）
+#  - motor_id_map__all.csv を参照し、(code, motor_number, date) に対して有効期間で motor_id を決定
+#  - 欠損・複数候補は原則即エラー（推測・補完なし）
+#  - motor_id は常に string として保持し、数字のみなら 6桁ゼロ埋め
+# -----------------------------------------------------------------------------
+if (-not $SkipMotorId) {
+
+  if (-not (Test-Path $MotorMapFull)) {
+    throw "motor_id_map__all.csv not found at: $MotorMapFull"
+  }
+
+  # preprocess_motor_id.py は out_csv 未指定なら in_csv に上書きする仕様（=master.csv を直接更新）
+  $argv275 = @(
+    $motor_id_py,
+    "--in_csv", $MasterFull,
+    "--map_csv", $MotorMapFull,
+    "--max_miss_rate", $MotorIdMaxMissRate
+  )
+
+  Push-Location $RepoRoot
+  & $PythonPath @argv275
+  if ($LASTEXITCODE -ne 0) { Pop-Location; throw "preprocess_motor_id.py exited with code $LASTEXITCODE" }
+  Pop-Location
+  Write-Host "OK    master.csv overwritten with motor_id."
 }
 
 # -----------------------------------------------------------------------------
