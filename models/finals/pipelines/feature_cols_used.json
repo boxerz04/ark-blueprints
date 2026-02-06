@@ -50,11 +50,13 @@
     "base_p_sashi",
     "boat_2rentai_rate",
     "boat_3rentai_rate",
+    "boat_color",
     "code",
     "condition_point_rate",
     "condition_point_sum",
     "counter_weight",
     "day",
+    "entry_history",
     "entry_tenji",
     "finish1_cnt_last10_entry",
     "finish1_cnt_last10_waku",
@@ -204,11 +206,13 @@
     "base_p_sashi",
     "boat_2rentai_rate",
     "boat_3rentai_rate",
+    "boat_color",
     "code",
     "condition_point_rate",
     "condition_point_sum",
     "counter_weight",
     "day",
+    "entry_history",
     "entry_tenji",
     "finish1_cnt_last10_entry",
     "finish1_cnt_last10_waku",
@@ -375,9 +379,9 @@
     "motor_prev5_sum_motor_score_sum"
   ],
   "outputs": {
-    "X": "data\\processed\\finals\\X_dense.npz",
-    "y": "data\\processed\\finals\\y.csv",
-    "ids": "data\\processed\\finals\\ids.csv",
-    "pipeline": "models\\finals\\latest\\feature_pipeline.pkl"
+    "X": "data\\processed\\features\\finals\\X_dense.npz",
+    "y": "data\\processed\\features\\finals\\y.csv",
+    "ids": "data\\processed\\features\\finals\\ids.csv",
+    "pipeline": "models\\finals\\pipelines\\feature_pipeline.pkl"
   }
 }

@@ -1,7 +1,7 @@
 # AUTO-GENERATED: edit by removing/commenting out columns you don't want.
 # Source of truth: feature_cols_used.json (selected_feature_cols)
 columns:
-  # - AB_class
+  - AB_class
   - F
   - L
   - LC_2rentai_rate
@@ -45,13 +45,13 @@ columns:
   - base_p_sashi
   - boat_2rentai_rate
   - boat_3rentai_rate
-  - boat_color
+  # - boat_color
   - code
   - condition_point_rate
   - condition_point_sum
   - counter_weight
   - day
-  - entry_history
+  # - entry_history
   - entry_tenji
   - finish1_cnt_last10_entry
   - finish1_cnt_last10_waku

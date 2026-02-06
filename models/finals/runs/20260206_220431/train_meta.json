@@ -1,0 +1,18 @@
+{
+  "model_id": "20260206_220431",
+  "created_at": "2026-02-06 22:04:31",
+  "version_tag": "v1.1.0-finals-20251231",
+  "notes": "AB_class復元 + motor_section入り(finals.yaml)（preprocess済みのため学習のみ）",
+  "git_commit": "7ef6e18",
+  "n_rows": 22680,
+  "n_features": 202,
+  "sparse": false,
+  "eval": {
+    "auc": 0.8089440122756921,
+    "pr_auc": 0.7189241303078022,
+    "logloss": 0.4982618577152186,
+    "accuracy": 0.7824074074074074,
+    "mcc": 0.48480470912031576,
+    "top2_hit": 0.9312169312169312
+  }
+}
