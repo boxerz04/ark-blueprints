@@ -1,65 +1,144 @@
-# Ark Blueprints
+# ark-blueprints
 
-未完の部品を一つずつ集め、いつか航海に出る箱舟を形にするプロジェクト。⛵
+ボートレースの **データ収集 → 前処理 → 学習 → 推論（GUI/CLI）** を、
+再現性と運用性を重視して一気通貫で扱う開発プロジェクトです。
 
----
-
-## 📝 プロジェクト概要
-
-Ark Blueprints は、ボートレースのデータを **収集 → 前処理 → 特徴量生成 → 機械学習 → 推論** まで行うことを目指す開発プロジェクトです。  
-現在は以下の機能が完成しています：
-
-* スクレイピングによるデータ収集（レース情報・オッズ）
-* 日次 CSV 生成（raw + refund）
-* タイムライン生成（未確定レースの締切予定時刻を取得）
-* スケジューラによる直前オッズ収集（準優・優勝戦）
-* 前処理（欠損値処理・型変換・失格レース除外・ST/ST展示変換）
-* 特徴量生成（数値/カテゴリ列の選定、OneHot + 標準化）
-* LightGBM による初回学習・モデル保存
+本リポジトリは「実験用ノートブックの寄せ集め」ではなく、
+**日次運用・再学習・GUI推論までを前提とした実運用コードベース**として整備しています。
 
 ---
 
-## 📂 ディレクトリ構造
+## プロジェクトの思想
+
+- **SSOT（Single Source of Truth）を明確にする**
+- 学習と推論で **同一の前処理・特徴量定義を必ず共有**
+- 「一度動いたコード」を **壊さずに改良する**
+- 将来の特徴量設計・モデル追加に耐える構造を保つ
+
+---
+
+## ドキュメント（docs/）
+
+本プロジェクトは、運用の核となるパイプラインを **3本のドキュメント**として固定しています。
+
+| フェーズ | 内容 | ドキュメント |
+|---|---|---|
+| master | 生データから学習・推論共通の master CSV を生成 | `docs/master_pipeline.md` |
+| training | master から学習用特徴量を作りモデルを学習 | `docs/training_pipeline.md` |
+| inference | 学習済みモデルを用いた単レース推論 | `docs/inference_pipeline.md` |
+
+---
+
+## ディレクトリ構造（要点）
 
 ```text
 ark-blueprints/
-├─ scripts/                # 実行スクリプト群
-│  ├─ scrape_one_race.py   # 公式サイトから1Rデータ取得
-│  ├─ build_live_row.py    # 直前データを加工してCSV化
-│  ├─ preprocess_base_features.py  # base特徴量生成（notebook不要）
-│  ├─ preprocess_sectional.py      # sectional特徴量前処理
-│  ├─ features_sectional.py        # sectional用特徴量生成
-│  ├─ predict_one_race.py          # 単レース推論（base / sectional対応）
-│  ├─ predict_top2pair.py          # ペアモデル推論（任意）
-│  └─ ...
+├─ README.md
+├─ docs/                          # ドキュメント群（パイプラインSSOT）
+│  ├─ master_pipeline.md
+│  ├─ training_pipeline.md
+│  └─ inference_pipeline.md
 │
-├─ src/
-│  └─ adapters/
-│     ├─ base.py           # baseモデル用アダプタ
-│     └─ sectional.py      # sectionalモデル用アダプタ
+├─ batch/                         # パイプライン実行用 PowerShell
+│  ├─ build_master_range.ps1      # master生成の入口（SSOT）
+│  └─ train_model_from_master.ps1 # 学習の入口（SSOT）
 │
-├─ models/                 # 学習済みモデル
-│  ├─ base/latest/
-│  ├─ sectional/latest/
-│  └─ top2pair/latest/
+├─ scripts/                       # 実行スクリプト群（CLI）
+│  ├─ scrape_one_race.py
+│  ├─ build_live_row.py
+│  ├─ preprocess_base_features.py
+│  ├─ preprocess_motor_id.py
+│  ├─ preprocess_motor_section.py
+│  ├─ preprocess_course.py
+│  ├─ preprocess_sectional.py
+│  └─ predict_one_race.py
+│
+├─ src/                           # ライブラリ層（再利用・責務分離）
+│  ├─ adapters/                   # 推論時の入力整形（base/sectional 等）
+│  ├─ raceinfo_features.py        # racelist HTML → 今節スナップショット特徴量
+│  ├─ st.py                       # STパーサ
+│  └─ rank.py                     # 着順パーサ
+│
+├─ features/                      # 特徴量定義（YAML = 入力側SSOT）
+│  └─ finals.yaml
 │
 ├─ data/
-│  ├─ live/                # 直前データと推論結果
 │  ├─ processed/
-│  │  ├─ base/             # base特徴量保存
-│  │  └─ sectional/        # sectional特徴量保存
-│  └─ config/settings.json # GUIの設定保存
+│  │  ├─ master.csv
+│  │  ├─ master_finals.csv
+│  │  └─ finals/                  # 学習用 X / y / ids
+│  └─ live/                       # 推論用一時データ
 │
-├─ docs/
-│  ├─ usage_train.md       # 学習手順
-│  └─ usage_predict.md     # 推論手順
-│
-├─ gui_predict_one_race.py # GUIランチャー（base/sectional切替対応）
-└─ suji_strategy.py        # スジ舟券生成ロジック（現在はGUIから分離）
+└─ models/
+   └─ finals/
+      ├─ runs/                    # 学習run単位の成果物
+      └─ latest/                  # 最新モデル（運用対象）
 ```
 
+---
 
+## できること（現在）
 
+- レース公式サイトからの **単レースHTML取得**
+- live master（1レース6艇）の生成
+- 学習時と同一ロジックによる特徴量付与
+- 二値分類モデル学習（Top2）
+- 学習済みモデルを用いた **GUI推論**
+- モデル・前処理・評価指標の run 単位保存と再現
 
+---
 
+## 学習の基本フロー（概要）
+
+```text
+master(_finals).csv
+  ↓
+preprocess_base_features.py
+  ↓
+X_dense.npz / y.csv / ids.csv
+  ↓
+train.py
+  ↓
+models/<approach>/runs/<model_id>/
+```
+
+※ 詳細は `docs/training_pipeline.md` を参照。
+
+---
+
+## 推論の基本フロー（概要）
+
+```text
+GUI操作
+  ↓
+scrape_one_race.py
+  ↓
+build_live_row.py
+  ↓
+各種 preprocess
+  ↓
+predict_one_race.py
+  ↓
+確率出力（GUI / CSV）
+```
+
+※ 詳細は `docs/inference_pipeline.md` を参照。
+
+---
+
+## 設計上の重要ルール
+
+- 推論では **学習済み feature_pipeline.pkl を必ず使用**（列整合のSSOT）
+- 列の追加・削除は学習側でのみ行い、推論側は upstream で担保する
+- `models/<approach>/latest/` は「運用対象の安定版」
+
+---
+
+## ステータス
+
+- master パイプライン：安定
+- 学習パイプライン：安定
+- 推論GUI：運用可能
+
+本リポジトリは **「いま動いているものを壊さずに育てる」** 方針で継続開発中です。
 
