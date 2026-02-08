@@ -1,8 +1,8 @@
 {
-  "model_id": "20260208_162632",
-  "created_at": "2026-02-08 16:26:32",
-  "version_tag": "v1.1.1-finals-team",
-  "notes": "team（支部）をOneHotで採用。地元性が有効であることを確認したため固定。",
+  "model_id": "20260208_161956",
+  "created_at": "2026-02-08 16:19:56",
+  "version_tag": "v1.1.0-team-test",
+  "notes": "DEFAULT_DROP_COLS更新：teamのみ復活の検証",
   "git_commit": "7d4ee8e",
   "n_rows": 22680,
   "n_features": 220,

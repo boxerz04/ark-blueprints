@@ -2,86 +2,102 @@
 # -----------------------------------------------------------------------------
 # 共通 master（または派生 master）から任意のモデルを学習する汎用スクリプト。
 #
-# フロー:
-#   1) 特徴量生成（任意の Python スクリプトを指定可能）
-#   2) train.py を approach 指定で実行
-#   3) models/<Approach>/latest/train_meta.json を読み要約表示
-#   4) ModelAlias が指定されていれば models/<ModelAlias>/ にもコピー
+# 目的
+# ----
+# 1) 特徴量生成（preprocess_*）を実行して X/y/ids と feature_pipeline を用意する
+# 2) train.py を approach 指定で実行し、モデルを models/<Approach>/runs/<model_id>/ に保存する
+# 3) models/<Approach>/latest/train_meta.json を読み、学習結果を要約表示する
+# 4) ModelAlias が指定されていれば models/<ModelAlias>/ にも成果物をコピーする
 #
-# 例1: 通常の base モデル（共通 master を使用）
-#   powershell -NoProfile -ExecutionPolicy Bypass `
-#     -File .\batch\train_model_from_master.ps1 `
-#     -Approach "base" `
-#     -VersionTag "v1.3.3-base-20251124" `
-#     -Notes "train_model_from_master.ps1 動作テスト（base）" `
-#     -MasterCsv "data\processed\master.csv" `
-#     -FeaturesOutDir "data\processed\base" `
-#     -PipelineDir "models\base\latest"
+# Phase 2（YAML固定）対応
+# ----------------------
+# preprocess_base_features.py は Phase 2 で以下を要求する：
+#   --master <csv> --feature-spec-yaml <yaml> --approach <approach>
 #
-# 例2: finals モデル（優勝/準優/準優進出戦だけの master_finals.csv を使用）
-#   powershell -NoProfile -ExecutionPolicy Bypass `
-#     -File .\batch\train_model_from_master.ps1 `
-#     -Approach "finals" `
-#     -VersionTag "v1.0.0-finals-20251124" `
-#     -Notes "優勝/準優/準優進出戦専用モデル" `
-#     -MasterCsv "data\processed\master_finals.csv" `
-#     -FeaturesOutDir "data\processed\finals" `
-#     -PipelineDir "models\finals\latest" `
-#     -ModelAlias "finals"
+# ただし移行期の互換性のため、本PS1は二つの呼び出し形をサポートする：
 #
-# ※ Approach は train.py に渡す --approach の値。
-#    ModelAlias は「models/<alias>/... にもコピー保存したいとき」に使うラベル。
+# [A] Phase 2 モード（YAML固定）
+#   -FeatureSpecYaml が指定されている場合：
+#     python preprocess_base_features.py --master ... --feature-spec-yaml ... --approach ...
+#
+# [B] 旧モード（従来互換）
+#   -FeatureSpecYaml が未指定の場合：
+#     python preprocess_*.py --master ... --out-dir ... --pipeline-dir ...
+#
+# 注意
+# ----
+# - Phase 2 モードでは、preprocess 側の出力先は「コードで固定」されている前提。
+#   そのため FeaturesOutDir / PipelineDir は「ログ表示・互換目的」で残す。
+# - 旧モードの preprocess を使う場合は従来通り FeaturesOutDir / PipelineDir が有効。
 # -----------------------------------------------------------------------------
 
 param(
-  # ルート/実行環境
+  # ---------------------------------------------------------------------------
+  # 実行環境
+  # ---------------------------------------------------------------------------
   [string]$RepoRoot   = "",
   [string]$PythonPath = "C:\anaconda3\python.exe",
 
+  # ---------------------------------------------------------------------------
   # 入出力（master → 特徴量 → モデル）
+  # ---------------------------------------------------------------------------
   [string]$MasterCsv      = "data\processed\master.csv",
-  [string]$FeaturesOutDir = "",   # 空なら data\processed/<Approach>
-  [string]$PipelineDir    = "",   # 空なら models/<Approach>/latest
 
+  # 旧モード互換の出力指定（Phase 2 モードでは preprocess 側が固定出力の想定）
+  [string]$FeaturesOutDir = "",   # 空なら data\processed\<Approach>
+  [string]$PipelineDir    = "",   # 空なら models\<Approach>\latest
+
+  # ---------------------------------------------------------------------------
   # 前処理スクリプト（特徴量生成）
-  # 例: scripts\preprocess_base_features.py / scripts\preprocess_sectional_features.py など
+  # ---------------------------------------------------------------------------
   [string]$PrepScript = "scripts\preprocess_base_features.py",
 
+  # Phase 2: YAML固定（列SSOT）
+  # 例: features\finals.yaml
+  [string]$FeatureSpecYaml = "",
+
+  # ---------------------------------------------------------------------------
   # 学習メタ
+  # ---------------------------------------------------------------------------
   [Parameter(Mandatory=$true)][string]$Approach,   # train.py --approach
   [Parameter(Mandatory=$true)][string]$VersionTag,
   [string]$Notes = "",
 
-  # models/<Approach>/latest → models/<ModelAlias>/ にもコピーしたいときの別名
-  # finals など。空ならコピーしない。
+  # models/<Approach>/latest → models/<ModelAlias>/ にもコピーしたいときの別名（例: finals）
   [string]$ModelAlias = "",
 
-  # 特徴量生成をスキップしたい場合（既に FeaturesOutDir に X/y があるとき）
+  # 特徴量生成をスキップ（既に X/y/ids が揃っている場合）
   [switch]$SkipPreprocess
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-function Ensure-ParentDir([string]$path) {
-  $parent = Split-Path -Parent $path
-  if ($parent -and -not (Test-Path $parent)) {
-    New-Item -ItemType Directory -Path $parent | Out-Null
+function Ensure-Dir([string]$path) {
+  if (-not (Test-Path $path)) {
+    New-Item -ItemType Directory -Force -Path $path | Out-Null
   }
 }
 
-# RepoRoot 未指定ならこのファイルの親ディレクトリの上をルートに
+function Ensure-ParentDir([string]$path) {
+  $parent = Split-Path -Parent $path
+  if ($parent -and -not (Test-Path $parent)) {
+    New-Item -ItemType Directory -Force -Path $parent | Out-Null
+  }
+}
+
+# RepoRoot 未指定なら、このファイルの親ディレクトリの上をルートにする
 if (-not $RepoRoot -or $RepoRoot.Trim() -eq "") {
   $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 }
 
-# Python 実行確認
+# Python 実行確認（無ければ python を試す）
 if (-not (Test-Path $PythonPath)) {
   Write-Host "WARN  PythonPath not found: $PythonPath -> fallback to 'python'"
   $PythonPath = "python"
 }
 
-# デフォルトパスの補完（Approach から推定）
+# デフォルトパス補完（Approach から推定）
 if (-not $FeaturesOutDir -or $FeaturesOutDir.Trim() -eq "") {
   $FeaturesOutDir = "data\processed\$Approach"
 }
@@ -89,16 +105,26 @@ if (-not $PipelineDir -or $PipelineDir.Trim() -eq "") {
   $PipelineDir = "models\$Approach\latest"
 }
 
-# フルパスに変換
+# フルパス化（ログ表示・互換確保）
 $MasterFull   = Join-Path $RepoRoot $MasterCsv
 $FeatOutFull  = Join-Path $RepoRoot $FeaturesOutDir
 $PipelineFull = Join-Path $RepoRoot $PipelineDir
 
+# 旧モードで必要になるディレクトリを作っておく（Phase 2 でも害はない）
 Ensure-ParentDir $MasterFull
-Ensure-ParentDir $FeatOutFull
-Ensure-ParentDir $PipelineFull
+Ensure-Dir $FeatOutFull
+Ensure-Dir $PipelineFull
 
-# 前処理スクリプト検出
+# FeatureSpecYaml フルパス化（指定時）
+$SpecFull = ""
+if ($FeatureSpecYaml -and $FeatureSpecYaml.Trim() -ne "") {
+  $SpecFull = $FeatureSpecYaml
+  if (-not [System.IO.Path]::IsPathRooted($SpecFull)) {
+    $SpecFull = Join-Path $RepoRoot $SpecFull
+  }
+}
+
+# preprocess スクリプト検出
 $prep_full = $null
 foreach ($c in @($PrepScript, "scripts\preprocess_base_features.py")) {
   $p = $c
@@ -125,38 +151,62 @@ foreach ($c in @("scripts\train.py","train.py")) {
 }
 if (-not $train_py) { throw "train.py not found under repo." }
 
-Write-Host "INFO RepoRoot      : $RepoRoot"
-Write-Host "INFO Python        : $PythonPath"
-Write-Host "INFO master.csv    : $MasterFull"
-Write-Host "INFO features out  : $FeatOutFull"
-Write-Host "INFO pipeline dir  : $PipelineFull"
-Write-Host "INFO PrepScript    : $prep_full"
-Write-Host "INFO Approach      : $Approach"
-Write-Host "INFO VersionTag    : $VersionTag"
-Write-Host "INFO Notes         : $Notes"
-if ($ModelAlias -and $ModelAlias.Trim() -ne "") {
-  Write-Host "INFO ModelAlias    : $ModelAlias (models\<alias>\* にコピー保存)"
+# 実行情報
+Write-Host "INFO RepoRoot        : $RepoRoot"
+Write-Host "INFO Python          : $PythonPath"
+Write-Host "INFO MasterCsv       : $MasterFull"
+Write-Host "INFO Approach        : $Approach"
+Write-Host "INFO VersionTag      : $VersionTag"
+Write-Host "INFO Notes           : $Notes"
+Write-Host "INFO PrepScript      : $prep_full"
+
+if ($SpecFull -and $SpecFull.Trim() -ne "") {
+  Write-Host "INFO FeatureSpecYaml : $SpecFull (Phase 2: YAML固定)"
 } else {
-  Write-Host "INFO ModelAlias    : (none)"
+  Write-Host "INFO FeatureSpecYaml : (none) (旧モード: out-dir / pipeline-dir を使用)"
+}
+
+Write-Host "INFO FeaturesOutDir  : $FeatOutFull"
+Write-Host "INFO PipelineDir     : $PipelineFull"
+
+if ($ModelAlias -and $ModelAlias.Trim() -ne "") {
+  Write-Host "INFO ModelAlias      : $ModelAlias (models\<alias>\* にコピー保存)"
+} else {
+  Write-Host "INFO ModelAlias      : (none)"
 }
 
 # -----------------------------------------------------------------------------
-# Step 1) 特徴量生成（任意の PrepScript） → X/y/ids + feature_pipeline.pkl
+# Step 1) 特徴量生成（PrepScript）
 # -----------------------------------------------------------------------------
 if (-not $SkipPreprocess) {
   if (-not (Test-Path $MasterFull)) {
     throw "master.csv not found: $MasterFull"
   }
 
-  $argv1 = @(
-    $prep_full,
-    "--master", $MasterFull,
-    "--out-dir", $FeatOutFull,
-    "--pipeline-dir", $PipelineFull
-  )
+  # Phase 2（YAML固定）: --feature-spec-yaml と --approach を渡す
+  # 旧モード互換         : --out-dir と --pipeline-dir を渡す
+  $argv1 = @($prep_full)
+
+  if ($SpecFull -and $SpecFull.Trim() -ne "") {
+    if (-not (Test-Path $SpecFull)) {
+      throw "FeatureSpecYaml not found: $SpecFull"
+    }
+    $argv1 += @(
+      "--master", $MasterFull,
+      "--feature-spec-yaml", $SpecFull,
+      "--approach", $Approach
+    )
+  } else {
+    $argv1 += @(
+      "--master", $MasterFull,
+      "--out-dir", $FeatOutFull,
+      "--pipeline-dir", $PipelineFull
+    )
+  }
+
   Push-Location $RepoRoot
   & $PythonPath @argv1
-  if ($LASTEXITCODE -ne 0) { 
+  if ($LASTEXITCODE -ne 0) {
     Pop-Location
     throw "PrepScript exited with code $LASTEXITCODE"
   }
@@ -175,9 +225,10 @@ $argv2 = @(
   "--version-tag", $VersionTag,
   "--notes", $Notes
 )
+
 Push-Location $RepoRoot
 & $PythonPath @argv2
-if ($LASTEXITCODE -ne 0) { 
+if ($LASTEXITCODE -ne 0) {
   Pop-Location
   throw "train.py exited with code $LASTEXITCODE"
 }
@@ -189,6 +240,7 @@ Write-Host "OK  training finished."
 # -----------------------------------------------------------------------------
 $latestMeta = Join-Path $RepoRoot ("models\" + $Approach + "\latest\train_meta.json")
 if (-not (Test-Path $latestMeta)) {
+  # latest が無い場合は runs の中から新しいものを拾う
   $runsRoot = Join-Path $RepoRoot ("models\" + $Approach + "\runs")
   $runs = Get-ChildItem -Path $runsRoot -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending
   foreach ($r in $runs) {
@@ -208,12 +260,12 @@ if (Test-Path $latestMeta) {
     $m = Get-Content $latestMeta -Raw -Encoding UTF8 | ConvertFrom-Json
   }
 
-  Write-Host "OK  latest meta    : $latestMeta"
-  Write-Host ("ID/Tag             : {0} / {1}" -f $m.model_id, $m.version_tag)
-  Write-Host ("Rows/Feats         : {0} / {1}" -f $m.n_rows, $m.n_features)
+  Write-Host "OK  latest meta      : $latestMeta"
+  Write-Host ("ID/Tag               : {0} / {1}" -f $m.model_id, $m.version_tag)
+  Write-Host ("Rows/Feats           : {0} / {1}" -f $m.n_rows, $m.n_features)
   if ($m.eval) {
-    Write-Host ("Eval(AUC/PR/LL)    : {0:N6} / {1:N6} / {2:N6}" -f $m.eval.auc, $m.eval.pr_auc, $m.eval.logloss)
-    Write-Host ("Acc/MCC/Top2Hit    : {0:N6} / {1:N6} / {2:N6}" -f $m.eval.accuracy, $m.eval.mcc, $m.eval.top2_hit)
+    Write-Host ("Eval(AUC/PR/LL)      : {0:N6} / {1:N6} / {2:N6}" -f $m.eval.auc, $m.eval.pr_auc, $m.eval.logloss)
+    Write-Host ("Acc/MCC/Top2Hit      : {0:N6} / {1:N6} / {2:N6}" -f $m.eval.accuracy, $m.eval.mcc, $m.eval.top2_hit)
   }
 
   # ---------------------------------------------------------------------------
@@ -242,9 +294,9 @@ if (Test-Path $latestMeta) {
       }
 
       if ($sameLatest) {
-        Write-Host ("OK  aliased copy   : models\{0}\{1} (latest は元々同じのためコピー省略)" -f $ModelAlias, $m.model_id)
+        Write-Host ("OK  aliased copy     : models\{0}\{1} (latest は元々同じのためコピー省略)" -f $ModelAlias, $m.model_id)
       } else {
-        Write-Host ("OK  aliased copy   : models\{0}\{1} + latest" -f $ModelAlias, $m.model_id)
+        Write-Host ("OK  aliased copy     : models\{0}\{1} + latest" -f $ModelAlias, $m.model_id)
       }
     } else {
       Write-Host "WARN source latest dir not found; alias copy skipped: $srcLatestDir"

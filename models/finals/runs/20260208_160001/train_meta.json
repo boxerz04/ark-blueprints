@@ -1,0 +1,18 @@
+{
+  "model_id": "20260208_160001",
+  "created_at": "2026-02-08 16:00:01",
+  "version_tag": "v1.1.0-precondition-test",
+  "notes": "DEFAULT_DROP_COLS更新：precondition_1/2のみ残す検証",
+  "git_commit": "7d4ee8e",
+  "n_rows": 22680,
+  "n_features": 202,
+  "sparse": false,
+  "eval": {
+    "auc": 0.810794508132471,
+    "pr_auc": 0.7183904370200512,
+    "logloss": 0.49549961549243304,
+    "accuracy": 0.7806437389770723,
+    "mcc": 0.48030520911045477,
+    "top2_hit": 0.9272486772486772
+  }
+}
