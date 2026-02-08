@@ -1,6 +1,6 @@
 version: 1
 approach: finals
-model_id: '20260209_022344'
+model_id: '20260209_015033'
 master: C:\Users\user\Desktop\Git\ark-blueprints\data\processed\master_finals.csv
 feature_spec_yaml: C:\Users\user\Desktop\Git\ark-blueprints\features\finals.yaml
 selection_mode: yaml
@@ -18,7 +18,6 @@ options:
   max_cat_card: 50
 columns:
   use: &id001
-  - AB_class
   - F
   - L
   - LC_2rentai_rate
@@ -190,7 +189,6 @@ force_dropped_cols_present:
 - boat_color
 - entry_history
 selected_feature_cols:
-- AB_class
 - F
 - L
 - LC_2rentai_rate
@@ -495,7 +493,6 @@ numeric_cols:
 - weight
 - wind_speed
 categorical_cols:
-- AB_class
 - precondition_1
 - precondition_2
 - race_attribute
@@ -534,9 +531,9 @@ adv_like_zero_fill_cols:
 n_rows: 22680
 X_shape:
 - 22680
-- 220
+- 216
 outputs:
   X: data\processed\finals\X_dense.npz
   y: data\processed\finals\y.csv
   ids: data\processed\finals\ids.csv
-  pipeline: models\finals\runs\20260209_022344\feature_pipeline.pkl
+  pipeline: models\finals\runs\20260209_015033\feature_pipeline.pkl

@@ -1,0 +1,18 @@
+{
+  "model_id": "20260209_021929",
+  "created_at": "2026-02-09 02:19:29",
+  "version_tag": "v1.1.6",
+  "notes": "v1.1.5（pred_mark除外）と比較。AB_classを復活、pred_markのみ除外",
+  "git_commit": "27c2dc5",
+  "n_rows": 22680,
+  "n_features": 219,
+  "sparse": false,
+  "eval": {
+    "auc": 0.8127368617199967,
+    "pr_auc": 0.7212635194568122,
+    "logloss": 0.4941550489959254,
+    "accuracy": 0.7784391534391535,
+    "mcc": 0.4743680680830376,
+    "top2_hit": 0.9259259259259259
+  }
+}

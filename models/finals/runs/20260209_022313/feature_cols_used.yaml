@@ -1,8 +1,8 @@
 version: 1
 approach: finals
-model_id: '20260209_022344'
-master: C:\Users\user\Desktop\Git\ark-blueprints\data\processed\master_finals.csv
-feature_spec_yaml: C:\Users\user\Desktop\Git\ark-blueprints\features\finals.yaml
+model_id: '20260209_022313'
+master: data\processed\master_finals.csv
+feature_spec_yaml: features\finals.yaml
 selection_mode: yaml
 spec_normalized_from_used_yaml: false
 id_cols:
@@ -539,4 +539,4 @@ outputs:
   X: data\processed\finals\X_dense.npz
   y: data\processed\finals\y.csv
   ids: data\processed\finals\ids.csv
-  pipeline: models\finals\runs\20260209_022344\feature_pipeline.pkl
+  pipeline: models\finals\runs\20260209_022313\feature_pipeline.pkl

@@ -1,0 +1,18 @@
+{
+  "model_id": "20260209_020843",
+  "created_at": "2026-02-09 02:08:43",
+  "version_tag": "v1.1.5",
+  "notes": "v1.1.4（pred_mark除外）から motor_2rentai_rate / motor_3rentai_rate を復活して比較",
+  "git_commit": "27c2dc5",
+  "n_rows": 22680,
+  "n_features": 215,
+  "sparse": false,
+  "eval": {
+    "auc": 0.8128457787435962,
+    "pr_auc": 0.718020723918986,
+    "logloss": 0.4928511863013867,
+    "accuracy": 0.78505291005291,
+    "mcc": 0.4912731908439968,
+    "top2_hit": 0.9285714285714286
+  }
+}

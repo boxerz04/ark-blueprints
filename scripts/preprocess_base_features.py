@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-preprocess_base_features.py  (Phase 2: YAML SSOT + used.yaml + json廃止)
+preprocess_base_features.py  (Phase 2.1: YAML SSOT round-trip対応)
 
 本スクリプトの責務
 ------------------
@@ -9,12 +9,29 @@ preprocess_base_features.py  (Phase 2: YAML SSOT + used.yaml + json廃止)
 - 「実際に使われた列（事実）」を YAML（feature_cols_used.yaml）として保存する
 - models/{approach}/runs/<model_id>/ と models/{approach}/latest/ の成果物配置をコードで保証する
 
-Phase 2 の設計原則
-------------------
+Phase 2 の設計原則（更新）
+------------------------
 1) 列選別の SSOT は YAML（features/{approach}.yaml 等）
 2) json は出力しない（feature_cols_used.json を完全廃止）
 3) 最終防御線（FORCE_DROP_COLS）は YAML の有無に関係なく最終段で必ず除外する
-4) used.yaml は “事実の固定”（再現性の核）。features/*.yaml は “設計入力”（人が編集）
+4) used.yaml は “事実の固定”（再現性の核）
+
+Phase 2.1 追加: Round-trip（使い回し）対応
+----------------------------------------
+- これまで:
+    - 入力: features/{approach}.yaml（columns.use/add/drop を持つ "feature spec"）
+    - 出力: feature_cols_used.yaml（selected_feature_cols 等の "事実ログ"）
+  だったため、出力をリネームして入力に使う運用は想定外だった。
+
+- これから:
+    (A) feature_cols_used.yaml 側に columns/use/add/drop と options を「必ず」埋め込む
+    (B) 入力 YAML が feature spec 形式でなくても、
+        selected_feature_cols_before_force_drop / selected_feature_cols があれば
+        それを columns.use とみなして “互換入力” として扱う
+
+これにより:
+- feature_cols_used.yaml をそのまま features/{approach}.yaml にリネームして SSOT 化できる。
+- YAML で列の引き算（コメントアウト等）をして再学習 → 推論にも feature_pipeline.pkl 経由で反映できる。
 
 入出力ルール（固定）
 -------------------
@@ -28,13 +45,6 @@ Phase 2 の設計原則
 - models/{approach}/latest/
     - feature_pipeline.pkl（runsからコピー）
     - feature_cols_used.yaml（runsからコピー）
-
-運用フロー（推奨）
-------------------
-(1) columns.use を空で preprocess 実行（auto 推定）
-(2) runs/<model_id>/feature_cols_used.yaml の selected_feature_cols を
-    features/{approach}.yaml の columns.use に手動コピー
-(3) 以後は use/add/drop で設計管理し、FORCE_DROP_COLS で最終防御
 """
 
 from __future__ import annotations
@@ -98,7 +108,6 @@ DEFAULT_DROP_COLS = [
     "parts_exchange",
 ]
 
-
 # 数値列のうち「情報なし = 0」が自然なもの（例: adv/lr）
 ADV_LR_PREFIXES = ("adv_p", "lr_p", "adv_p_", "lr_p_")
 
@@ -115,7 +124,7 @@ FORCE_DROP_COLS = [
 
 
 # =============================================================================
-# Minimal YAML loader/dumper (PyYAML があれば利用、無ければ簡易)
+# Minimal YAML loader/dumper (PyYAML があれば利用、無ければエラー)
 # =============================================================================
 
 def _try_yaml() -> Optional[Any]:
@@ -128,8 +137,9 @@ def _try_yaml() -> Optional[Any]:
 
 def load_yaml(path: Path) -> Dict[str, Any]:
     """
-    features/*.yaml の仕様を読み取る。
-    想定: dict 構造（version/approach/target_col/id_cols/columns/options）
+    YAML を dict として読み込む。
+
+    本スクリプトは YAML SSOT を前提とするため、PyYAML が無い場合はエラーにする。
     """
     y = _try_yaml()
     text = path.read_text(encoding="utf-8")
@@ -137,7 +147,7 @@ def load_yaml(path: Path) -> Dict[str, Any]:
         obj = y.safe_load(text)
         return obj or {}
     raise RuntimeError(
-        "PyYAML が見つかりません。Phase 2 では YAML SSOT を使うため PyYAML を入れてください。\n"
+        "PyYAML が見つかりません。YAML SSOT を使うため PyYAML を入れてください。\n"
         "例: pip install pyyaml (Anaconda なら conda install pyyaml)"
     )
 
@@ -149,9 +159,7 @@ def dump_yaml(obj: Dict[str, Any], path: Path) -> None:
         with path.open("w", encoding="utf-8") as f:
             y.safe_dump(obj, f, allow_unicode=True, sort_keys=False)
         return
-    raise RuntimeError(
-        "PyYAML が見つかりません。Phase 2 では YAML 出力が必須です。PyYAML を入れてください。"
-    )
+    raise RuntimeError("PyYAML が見つかりません。YAML 出力が必須です。PyYAML を入れてください。")
 
 
 # =============================================================================
@@ -192,6 +200,60 @@ def apply_force_drop(selected_cols: List[str]) -> Tuple[List[str], List[str]]:
     return kept, force_present
 
 
+def normalize_spec_for_roundtrip(spec: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Round-trip 互換のための正規化。
+
+    目的:
+    - 入力 YAML が "feature spec" 形式 (columns/use/add/drop) でなくても
+      feature_cols_used.yaml をリネームしたものをそのまま入力として扱えるようにする。
+
+    方針:
+    - spec["columns"] が dict でない or 無い場合:
+        - selected_feature_cols_before_force_drop があれば、それを columns.use とみなす
+        - 無ければ selected_feature_cols を columns.use とみなす
+    - columns.add/drop は空配列で埋める（SSOTは use の明示列リスト運用に寄せる）
+    - options.max_cat_card が無ければデフォルト 50 を入れる
+
+    NOTE:
+    - ここで作る columns.use は「設計入力」として扱われる。
+      FORCE_DROP_COLS は別レイヤで必ず適用される（仕様固定）。
+    """
+    normalized_from_used = False
+
+    columns = spec.get("columns")
+    if not isinstance(columns, dict):
+        use_fallback = ensure_list(spec.get("selected_feature_cols_before_force_drop"))
+        if not use_fallback:
+            use_fallback = ensure_list(spec.get("selected_feature_cols"))
+        if use_fallback:
+            spec["columns"] = {"use": use_fallback, "add": [], "drop": []}
+            normalized_from_used = True
+        else:
+            # columns が無く、fallback も無い場合は空の columns を入れて auto 推定に落とす
+            spec["columns"] = {"use": [], "add": [], "drop": []}
+
+    # columns が dict なら、欠けているキーを補完（堅めに）
+    spec["columns"] = spec.get("columns") or {}
+    for k in ("use", "add", "drop"):
+        if k not in spec["columns"] or not isinstance(spec["columns"].get(k), list):
+            spec["columns"][k] = ensure_list(spec["columns"].get(k))
+
+    # options 補完
+    options = spec.get("options")
+    if not isinstance(options, dict):
+        spec["options"] = {"max_cat_card": 50}
+    else:
+        if "max_cat_card" not in options:
+            options["max_cat_card"] = 50
+        spec["options"] = options
+
+    # デバッグ用のメタ
+    spec["_normalized_from_used_yaml"] = bool(normalized_from_used)
+
+    return spec
+
+
 # =============================================================================
 # Column selection
 # =============================================================================
@@ -219,9 +281,10 @@ def select_cols_from_spec(
     used: pd.DataFrame,
     spec: Dict[str, Any],
     allow_missing: bool,
-) -> Tuple[List[str], str, List[str], List[str]]:
+) -> Tuple[List[str], str, List[str], List[str], int]:
     """
-    spec（features/finals.yaml）から selected_feature_cols を決める。
+    spec（features/{approach}.yaml 等）から selected_feature_cols を決める。
+
     - columns.use が空なら auto 推定
     - columns.add/drop を適用
     - 存在チェック
@@ -252,14 +315,16 @@ def select_cols_from_spec(
     # 存在チェック
     missing = [c for c in selected if c not in used.columns]
     if missing:
-        msg = f"[ERROR] selected cols missing in master: {missing[:30]}" + (f" ...(n={len(missing)})" if len(missing) > 30 else "")
+        msg = f"[ERROR] selected cols missing in master: {missing[:30]}" + (
+            f" ...(n={len(missing)})" if len(missing) > 30 else ""
+        )
         if allow_missing:
             print(msg.replace("[ERROR]", "[WARN]") + " -> skip missing")
             selected = [c for c in selected if c in used.columns]
         else:
             raise RuntimeError(msg + "\n        Fix features YAML or use --allow-missing-selected-cols")
 
-    return selected, selection_mode, add, drop
+    return selected, selection_mode, add, drop, max_cat_card
 
 
 # =============================================================================
@@ -296,8 +361,11 @@ def main() -> None:
     if not spec_path.exists():
         raise RuntimeError(f"feature spec yaml not found: {spec_path}")
 
-    # SSOT 読み込み
+    # ---------------------------------------------------------------------
+    # SSOT 読み込み + Round-trip 正規化
+    # ---------------------------------------------------------------------
     spec = load_yaml(spec_path)
+    spec = normalize_spec_for_roundtrip(spec)
 
     # target_col は YAML を正とし、CLI override があればそれを優先
     target_col = (args.target_col.strip() or str(spec.get("target_col") or "")).strip()
@@ -325,6 +393,8 @@ def main() -> None:
     print(f"[INFO] target_col    : {target_col}")
     print(f"[INFO] features_dir  : {features_dir}")
     print(f"[INFO] runs_dir      : {runs_dir}")
+    if spec.get("_normalized_from_used_yaml"):
+        print("[INFO] spec normalized: input looks like feature_cols_used.yaml (round-trip compat mode)")
 
     # 読み込み（dtypeブレ抑制）
     df = pd.read_csv(master_path, low_memory=False, parse_dates=["date"])
@@ -350,7 +420,7 @@ def main() -> None:
     # ---------------------------------------------------------------------
     # 列選別（YAML SSOT）: use/add/drop + auto
     # ---------------------------------------------------------------------
-    selected_cols, selection_mode, add_cols, drop_cols = select_cols_from_spec(
+    selected_cols, selection_mode, add_cols, drop_cols, max_cat_card = select_cols_from_spec(
         used=used,
         spec=spec,
         allow_missing=bool(args.allow_missing_selected_cols),
@@ -369,6 +439,7 @@ def main() -> None:
     adv_like_cols = [c for c in num_cols if any(c.startswith(p) for p in ADV_LR_PREFIXES)]
 
     print(f"[INFO] selection_mode        : {selection_mode}")
+    print(f"[INFO] max_cat_card         : {max_cat_card}")
     print(f"[INFO] selected cols         : {len(selected_cols)}")
     print(f"[INFO] numeric cols          : {len(num_cols)}")
     print(f"[INFO] categorical cols      : {len(cat_cols)}")
@@ -451,6 +522,12 @@ def main() -> None:
     pipeline_path = runs_dir / "feature_pipeline.pkl"
     joblib.dump(preprocessor, pipeline_path)
 
+    # ---------------------------------------------------------------------
+    # Round-trip を成立させるため、used_yaml 自体に columns/options を埋め込む
+    # - これをそのまま features/{approach}.yaml にリネームして SSOT 運用できる
+    # - columns.use は FORCE_DROP 適用前の列を採用（人が編集する“設計入力”に素直）
+    # - 実際の学習入力からは FORCE_DROP_COLS が最後に必ず除外される（仕様固定）
+    # ---------------------------------------------------------------------
     used_yaml = {
         "version": 1,
         "approach": approach,
@@ -459,15 +536,23 @@ def main() -> None:
         "feature_spec_yaml": str(spec_path),
 
         "selection_mode": selection_mode,
-        "spec_columns_use_empty": (not bool(ensure_list((spec.get("columns") or {}).get("use")))),
+        "spec_normalized_from_used_yaml": bool(spec.get("_normalized_from_used_yaml")),
 
+        # SSOTとして再利用可能なブロック（最重要）
         "id_cols": id_cols,
         "target_col": target_col,
+        "options": {"max_cat_card": int(max_cat_card)},
+        "columns": {
+            "use": selected_cols_before_force,
+            "add": [],   # SSOT運用は use の引き算が主戦場なので、ここは空で固定（必要なら手で追加する）
+            "drop": [],
+        },
 
+        # 参考: 元specの add/drop（再現ログ）
         "spec_add_cols": add_cols,
         "spec_drop_cols": drop_cols,
 
-        # 最終防御線の情報
+        # 最終防御線の情報（再現ログ）
         "force_drop_cols": FORCE_DROP_COLS,
         "selected_feature_cols_before_force_drop": selected_cols_before_force,
         "force_dropped_cols_present": force_dropped_present,

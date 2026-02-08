@@ -1,0 +1,8 @@
+version: 1
+approach: finals
+target_col: is_top2
+
+columns:
+  use: []     # 空 = auto 推定
+  add: []
+  drop: []
