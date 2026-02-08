@@ -453,17 +453,6 @@ def main():
         after_rows = len(df_cast)
         print(f"[INFO] date filter applied : start={start_dt} end={end_dt}  rows {before_rows} -> {after_rows}")
 
-    # === NEW === write drop前 master（drop_bad_races 前）
-    # 目的：欠場/失格等によるレース除外前の母集団を、motor_id/特徴量集計の参照元として残す
-    try:
-        pre_drop_path = out_path.parent / "master_pre_drop.csv"
-        pre_drop_path.parent.mkdir(parents=True, exist_ok=True)
-        df_cast.to_csv(pre_drop_path, index=False, encoding="utf-8-sig")
-        print(f"[OK] wrote master_pre_drop.csv : {pre_drop_path}  {df_cast.shape}")
-    except Exception as e:
-        write_crash(reports_dir, stage="save_pre_drop", err=e, df_like=df_cast, cols_hint=["race_id","date","code","motor_number","wakuban"], anomalies_df=anomalies_df)
-        raise
-
     # --- drop bad races
     try:
         df_kept, drop_info = drop_bad_races(df_cast)
