@@ -121,6 +121,17 @@ powershell -NoProfile -ExecutionPolicy Bypass ^
 - 設計上不要な列は `DEFAULT_DROP_COLS` で除外
 - 将来の絶対禁止列は `FORCE_DROP_COLS`（最終防御線）で除外
 
+### 特徴量YAMLの役割（どちらを編集するか）
+
+列の追加・削除など「特徴量の設計」を変えたいときは、**編集するのは次の一方だけ**です。
+
+| 役割 | 場所 | 編集する？ | 説明 |
+|------|------|------------|------|
+| **設計の入力（SSOT）** | `features/<approach>.yaml`<br>（例: `features/finals.yaml`） | **する** | 列選別の正本。ここを編集して学習を回す。 |
+| **その run の記録** | `models/<approach>/runs/<model_id>/feature_cols_used.yaml`<br>および `models/<approach>/latest/feature_cols_used.yaml` | **しない** | 学習のたびに上書きされる「実際に使った列」のログ。設計変更には使わない。 |
+
+**ルール**: 列を変えたいときは **`features/*.yaml` だけ** を編集する。`models/` 配下の `feature_cols_used.yaml` は編集しない（上書きされる記録用であり、次回学習時に無視される）。
+
 ### 出力
 - `data/processed/<approach>/X_dense.npz`
 - `data/processed/<approach>/y.csv`
@@ -168,6 +179,7 @@ models/<approach>/runs/<model_id>/
 models/<approach>/latest/
 ├─ model.pkl
 ├─ feature_pipeline.pkl
+├─ feature_cols_used.yaml   # 記録用（編集しない）
 └─ train_meta.json
 ```
 
@@ -179,12 +191,14 @@ models/<approach>/latest/
 
 - 学習は必ず **train_model_from_master.ps1 経由**で行う
 - Python スクリプトの単体実行は検証用途に限定
+- 列の変更は **features/*.yaml** で行う（`models/` の `feature_cols_used.yaml` は編集しない・記録用）
 - 列の変更は YAML or preprocess 側で管理し、
   train.py には影響を波及させない
 
 ---
 
 ## 更新履歴
+- 2026-02 : 特徴量YAMLの役割を明示（編集するのは features/*.yaml のみ、models/ の feature_cols_used.yaml は記録用）
 - 2026-02 : master パイプライン確定後の学習工程を分離し、
   preprocess / train / 成果物管理を明確化
 
