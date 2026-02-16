@@ -187,6 +187,50 @@ models/<approach>/latest/
 
 ---
 
+## ハイパーパラメータ探索（任意）
+
+学習と同じデータ・同じ時系列ホールドアウトで LightGBM のハイパーパラメータを探索し、**結果を確認してから**運用に反映できる。
+
+### 探索指標（重要）
+
+目標は **LogLoss 改善・PR-AUC 改善・外さないAI** であり、**AUC のみで最適化すると確率の質が崩れ、LogLoss が劣化しやすい**。  
+そのため探索の既定は **`neg_log_loss`（LogLoss 最小化）** とする。
+
+- 既定: `--scoring neg_log_loss`（確率の質を維持しつつ探索）
+- 必要に応じて `--scoring average_precision`（PR-AUC）、`--scoring roc_auc` も指定可能（roc_auc は確率劣化のリスクあり）
+
+### 実行方法
+
+```bat
+python scripts/tune_hyperparams.py --approach finals --n-iter 24
+```
+
+- `--n-iter`: ランダムに試す組み合わせ数（既定 24）。増やすと時間がかかる。
+- `--scoring`: 最適化する指標（既定 `neg_log_loss`）。上記を参照。
+- 結果は **`models/<approach>/hpo_results.json`** に保存される。
+
+### 結果の確認
+
+`hpo_results.json` には以下が含まれる。
+
+- **scoring**: 探索に使った指標（例: neg_log_loss）
+- **best_params**: 最良だったパラメータ（n_estimators, learning_rate, num_leaves 等）
+- **best_cv_score**: 探索時の CV スコア（scoring に応じた値。neg_log_loss なら大きいほど LogLoss が小さい）
+- **eval_metrics**: ホールドアウトでの AUC / PR-AUC / **Logloss** / MCC / Top2 hit（train.py と同じ指標）
+
+**Logloss が現行モデルより悪化していないか必ず確認する。** そのうえで PR-AUC・Top2 hit も見て運用に載せるか判断する。
+
+### 運用への反映
+
+- **手動で再学習する場合**:  
+  `train.py` に `hpo_results.json` の `best_params` を渡して再学習する。  
+  例: `python scripts/train.py --approach finals --version-tag v1.2 --n-estimators 600 --learning-rate 0.03 --num-leaves 31 ...`
+- **PS1 から渡す**: 将来、`train_model_from_master.ps1` にオプションを追加し、`best_params` を `train.py` に渡す運用も可能。
+
+探索は **学習パイプラインの外** で行い、結果を確認してから本番学習に反映する想定。
+
+---
+
 ## 運用上の原則
 
 - 学習は必ず **train_model_from_master.ps1 経由**で行う
@@ -198,6 +242,7 @@ models/<approach>/latest/
 ---
 
 ## 更新履歴
+- 2026-02 : ハイパーパラメータ探索（tune_hyperparams.py）の手順を追記
 - 2026-02 : 特徴量YAMLの役割を明示（編集するのは features/*.yaml のみ、models/ の feature_cols_used.yaml は記録用）
 - 2026-02 : master パイプライン確定後の学習工程を分離し、
   preprocess / train / 成果物管理を明確化
