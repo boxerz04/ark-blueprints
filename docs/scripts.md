@@ -1,3 +1,24 @@
+# scripts ドキュメント移行案内（互換ページ）
+
+> このページは **`docs/scripts/` 配下へ移行**しました。  
+> 今後の更新は新ドキュメント体系（一覧 + 個票）で行います。
+
+## 移行先
+
+| 種別 | リンク |
+|---|---|
+| 入口/使い方 | [`docs/scripts/README.md`](./scripts/README.md) |
+| scripts一覧（catalog） | [`docs/scripts/catalog.md`](./scripts/catalog.md) |
+| 個票テンプレート | [`docs/scripts/_template.md`](./scripts/_template.md) |
+| 個票: build_live_row | [`docs/scripts/build_live_row.md`](./scripts/build_live_row.md) |
+| 個票: build_raceinfo | [`docs/scripts/build_raceinfo.md`](./scripts/build_raceinfo.md) |
+| 個票: build_raw_csv | [`docs/scripts/build_raw_csv.md`](./scripts/build_raw_csv.md) |
+| 個票: build_season_course_prior_from_raw | [`docs/scripts/build_season_course_prior_from_raw.md`](./scripts/build_season_course_prior_from_raw.md) |
+
+---
+
+## 以下は旧ページ内容（互換のため残置）
+
 # scripts/build_live_row.py の役割
 
 レース直前に **1レース分の“raw相当6行データ”** を生成するスクリプト。  
