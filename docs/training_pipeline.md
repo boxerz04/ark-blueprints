@@ -97,7 +97,8 @@ powershell -NoProfile -ExecutionPolicy Bypass ^
   -VersionTag "v1.1.1-finals" ^
   -Notes "finals モデル再学習" ^
   -MasterCsv "data\\processed\\master_finals.csv" ^
-  -FeatureSpecYaml "features\\finals.yaml"
+  -FeatureSpecYaml "features\\finals.yaml" ^
+  -LgbmParamsYaml "models\\finals\\params.yaml"
 ```
 
 ---
@@ -160,6 +161,25 @@ powershell -NoProfile -ExecutionPolicy Bypass ^
   - version_tag
   - n_rows / n_features
   - eval metrics（AUC, PR-AUC, Logloss, Accuracy, MCC, Top2_hit）
+
+
+### ハイパラ適用方法（params.yaml を渡す）
+
+`models/finals/hpo_results.json` の `adopted_params` は `models/finals/params.yaml` にSSOTとして保持する。
+
+- `train.py` は `--lgbm-params-yaml <path>` 指定時のみ、YAML内の `lgbm_params` をデフォルトへ上書きマージする
+- 未指定時は従来デフォルト（互換維持）
+- `train_meta.json` に以下を保存する
+  - `lgbm_params_yaml`（実際に使ったYAMLパス）
+  - `lgbm_params_yaml_sha256`（YAMLハッシュ）
+  - `lgbm_params`（最終的に適用されたパラメータ）
+  - `git_commit`
+
+直接 `train.py` を使う例:
+
+```bat
+python scripts/train.py --approach finals --version-tag v1.2 --lgbm-params-yaml models/finals/params.yaml
+```
 
 ---
 
@@ -225,7 +245,7 @@ python scripts/tune_hyperparams.py --approach finals --n-iter 24
 - **手動で再学習する場合**:  
   `train.py` に `hpo_results.json` の `best_params` を渡して再学習する。  
   例: `python scripts/train.py --approach finals --version-tag v1.2 --n-estimators 600 --learning-rate 0.03 --num-leaves 31 ...`
-- **PS1 から渡す**: 将来、`train_model_from_master.ps1` にオプションを追加し、`best_params` を `train.py` に渡す運用も可能。
+- **PS1 から渡す**: `-LgbmParamsYaml "models\<approach>\params.yaml"` を指定して `train.py --lgbm-params-yaml` に渡す。
 
 探索は **学習パイプラインの外** で行い、結果を確認してから本番学習に反映する想定。
 

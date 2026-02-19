@@ -1,0 +1,12 @@
+# SSOT for finals model LightGBM hyperparameters.
+# Source: models/finals/hpo_results.json -> adopted_params
+lgbm_params:
+  subsample: 0.9
+  reg_lambda: 10.0
+  reg_alpha: 0
+  num_leaves: 15
+  n_estimators: 200
+  min_split_gain: 0
+  min_child_samples: 80
+  learning_rate: 0.03
+  colsample_bytree: 0.7

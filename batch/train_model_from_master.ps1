@@ -41,7 +41,9 @@ param(
   [string]$VersionTag = "",
   [string]$Notes      = "",
 
-  [string]$ModelAlias = ""
+  [string]$ModelAlias = "",
+
+  [string]$LgbmParamsYaml = ""
 )
 
 Set-StrictMode -Version Latest
@@ -93,6 +95,17 @@ if (-not (Test-Path $SpecFull)) {
   throw "FeatureSpecYaml not found ('$SpecFull')"
 }
 
+$LgbmParamsFull = ""
+if ($LgbmParamsYaml -and $LgbmParamsYaml.Trim() -ne "") {
+  $LgbmParamsFull = $LgbmParamsYaml
+  if (-not [System.IO.Path]::IsPathRooted($LgbmParamsFull)) {
+    $LgbmParamsFull = Join-Path $RepoRoot $LgbmParamsFull
+  }
+  if (-not (Test-Path $LgbmParamsFull)) {
+    throw "LgbmParamsYaml not found ('$LgbmParamsFull')"
+  }
+}
+
 $prep_full = Join-Path $RepoRoot $PrepScript
 if (-not (Test-Path $prep_full)) {
   throw "PrepScript not found ('$prep_full')"
@@ -122,6 +135,7 @@ Info "FeatureSpecYaml" "$SpecFull (Phase 2: YAML SSOT)"
 Info "FeaturesOutDir"  $FeatOutFull
 Info "PipelineDir"     $PipelineFull
 Info "ModelAlias"      ($(if ($ModelAlias -and $ModelAlias.Trim() -ne "") { $ModelAlias } else { "(none)" }))
+Info "LgbmParamsYaml"  ($(if ($LgbmParamsFull -and $LgbmParamsFull.Trim() -ne "") { $LgbmParamsFull } else { "(none)" }))
 
 # ---------------------------------------------------------------------------
 # 1) preprocess
@@ -155,6 +169,9 @@ if ($Notes -and $Notes.Trim() -ne "") {
 }
 if ($ModelAlias -and $ModelAlias.Trim() -ne "") {
   $train_args += @("--model-alias", $ModelAlias)
+}
+if ($LgbmParamsFull -and $LgbmParamsFull.Trim() -ne "") {
+  $train_args += @("--lgbm-params-yaml", $LgbmParamsFull)
 }
 
 & $PythonFull @train_args
