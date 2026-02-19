@@ -1,308 +1,465 @@
-# scripts ドキュメント移行案内（互換ページ）
+# scripts 辞典（現行運用版）
 
-> このページは **`docs/scripts/` 配下へ移行**しました。  
-> 今後の更新は新ドキュメント体系（一覧 + 個票）で行います。
-
-## 移行先
-
-| 種別 | リンク |
-|---|---|
-| 入口/使い方 | [`docs/scripts/README.md`](./scripts/README.md) |
-| scripts一覧（catalog） | [`docs/scripts/catalog.md`](./scripts/catalog.md) |
-| 個票テンプレート | [`docs/scripts/_template.md`](./scripts/_template.md) |
-| 個票: build_live_row | [`docs/scripts/build_live_row.md`](./scripts/build_live_row.md) |
-| 個票: build_raceinfo | [`docs/scripts/build_raceinfo.md`](./scripts/build_raceinfo.md) |
-| 個票: build_raw_csv | [`docs/scripts/build_raw_csv.md`](./scripts/build_raw_csv.md) |
-| 個票: build_season_course_prior_from_raw | [`docs/scripts/build_season_course_prior_from_raw.md`](./scripts/build_season_course_prior_from_raw.md) |
+本ページは `scripts/` 直下の現行 `.py` を対象に、運用・開発の参照辞典として全面再構築したものです（`_archive` は除外）。
 
 ---
 
-## 以下は旧ページ内容（互換のため残置）
+## A. この辞典の使い方
 
-# scripts/build_live_row.py の役割
+### 対象と定義
+- **現行**: `scripts/` 直下の `.py`（本書では 29 件を収録）。
+- **旧/アーカイブ**: `scripts/_archive/**`（本書の対象外）。
+- 除外ルール: `_archive`, `.ipynb_checkpoints`, `__pycache__`, `*checkpoint*` を除外。
 
-レース直前に **1レース分の“raw相当6行データ”** を生成するスクリプト。  
-学習用 `raceresult` は参照せず、Boatrace公式のHTML（`pay`, `index`, `racelist`, `pcexpect`, `beforeinfo`, `raceindex`）のみから構築します。  
-オンラインモードではHTMLを取得・キャッシュし、`data/live/html/` 配下に保存します。
-
-## 主な仕様
-
-- 出力: `data/live/raw_YYYYMMDD_JCD_R.csv`（6艇×1レース）
-- オンライン指定 (`--online`) 時:
-  - Boatrace公式からHTMLを直接取得し `data/live/html/<kind>/` にキャッシュ
-- オフライン時:
-  - `data/live/html` → `data/html` の順にローカルキャッシュを探索
-- 出力の基本構造:
-  - `race_id = YYYYMMDD + jcd2桁 + R2桁`
-  - `entry`, `is_wakunari` は将来用の空列（`Int64`, 全て NA）
-  - `wakuban` は `beforeinfo` から生成、欠損時は `1..6` で補完
-  - 列順は `data/raw` 内の最新 `*_raw.csv` に自動整列
-  - ST展示 (`ST_tenji`) の数値化と `ST_tenji_rank` を自動生成（小さい値=1位）
-
-## 主な処理フロー
-
-1. **HTML取得・キャッシュ**
-   - `pay`, `index`, `racelist`, `pcexpect`, `beforeinfo`, `raceindex`
-   - BeautifulSoup + `requests` によりパース
-
-2. **解析関数**
-   - `parse_pay`: 開催場・グレード・属性を抽出  
-   - `parse_index`: 日程・節日数などを抽出  
-   - `read_html_tables_robust`: `lxml`／`html5lib` 両対応の堅牢な `read_html` ラッパ  
-   - `parse_st`: `'F.01'→-0.01`, `'L.03'→+0.03`, `'.07'→0.07` の形式に統一  
-
-3. **`build_live_raw()`**
-   - すべての情報を結合して6行DataFrameを構築  
-   - `ST_tenji` の正規化／順位付け  
-   - 性別・気象・予想印などを統合  
-   - 数値列を型補正  
-   - 欠損列（結果系など）は空で埋める  
-
-4. **`main()`**
-   - コマンドライン引数を受け取り、`build_live_raw()` を実行  
-   - 出力CSVを作成し、自動的に列順を合わせて保存  
-   - 展示STが非数値（L単独等）を含む場合は推論中止（exit code 2）
-
-## 引数
-
-| 引数 | 内容 | 例 |
-|------|------|----|
-| `--date` | 開催日（必須, YYYYMMDD） | `20250903` |
-| `--jcd`  | 場コード（2桁 or 数値） | `12` |
-| `--race` | レース番号（1〜12） | `3` |
-| `--online` | 公式からHTML取得（省略時はローカル参照） | `--online` |
-| `--out` | 出力パス | `data/live/raw_20250903_12_03.csv` |
-
-## 実行例
-
-```bash
-python scripts/build_live_row.py \
-  --date 20250903 --jcd 12 --race 3 --online \
-  --out data/live/raw_20250903_12_03.csv
-```
-## 注意点
-
-- `raceresult` は使用しない（結果が未確定でも出力可）
-- `data/live/html` → `data/html` の順でキャッシュを探索
-- `data/raw/*_raw.csv` が存在しない場合、列順アラインをスキップ
-- `ST_tenji` に非数値が含まれるとエラー終了（安全設計）
-- 出力CSVは学習raw互換形式のため、`predict_one_race.py` に直接入力可能
----
-# scripts/build_raceinfo.py の役割
-
-`data/html/racelist/*.bin` を解析して、**日次の「今節スナップショット」CSV** を生成するスクリプト。  
-HTML解析ロジックはすべて `src/raceinfo_features.py` に委譲し、本スクリプトは  
-フロー制御とファイルI/O（入出力・日付処理）のみに徹しています。
-
-## 主な仕様
-
-- 入力: racelistの `.bin` ファイル群（`data/html/racelist`）  
-- 出力: `data/processed/raceinfo/raceinfo_YYYYMMDD.csv`  
-- 日付指定方式:
-  - `--date` 単一日付  
-  - `--start-date --end-date` 範囲指定（両端含む）  
-  - `--all-available` `.bin` ファイル名から自動抽出
-- 各 `.bin` を `src.raceinfo_features` の以下関数で処理  
-  - `process_racelist_content()`: HTML解析 → DataFrame化  
-  - `calculate_raceinfo_points()`: `ranking_point_map`・`condition_point_map` に基づくポイント付与  
-- race_id はファイル名中の連続数字を抽出（例: `20240914_racelist_12R.bin` → `2024091412`）
-
-## 提供関数と挙動
-
-### `process_one_day(html_dir, out_dir, ymd)`
-- 指定日 (`ymd`) の `.bin` をまとめて処理。  
-- 各 `.bin` → HTML読込 → 特徴抽出 → ポイント算出 → 結合。  
-- 出力先 `out_dir/raceinfo_YYYYMMDD.csv` を返す。  
-- `.bin` が見つからない場合は `None` を返す。
-
-### `extract_dates_from_filenames(dirpath)`
-- `.bin` ファイル名中の 8桁数字 (`YYYYMMDD`) を抽出し、日付一覧を返す。  
-- `--all-available` オプションで利用。
-
-### `iter_dates_from_range(start, end)`
-- 開始～終了の両端を含む日付レンジを1日刻みで生成。
-
-### `main()`
-- CLI引数を解析し、指定範囲の `.bin` を順に処理。  
-- 日次ごとの出力を作成し、合計レコード数をログ表示。
-
-## コマンドライン引数
-
-| 引数 | 説明 | 例 |
-|------|------|----|
-| `--date` | 単一日付を処理 | `--date 20250901` |
-| `--start-date`, `--end-date` | 範囲指定（両端含む） | `--start-date 20250901 --end-date 20250903` |
-| `--all-available` | `.bin` ファイル名から自動抽出 | `--all-available` |
-| `--html-dir` | 入力フォルダ | `data/html/racelist` |
-| `--out-dir` | 出力先 | `data/processed/raceinfo` |
-
-## 実行例
-
-### 単一日
-```bash
-python scripts/build_raceinfo.py --date 20250901
-```
-### 期間指定
-```bash
-python scripts/build_raceinfo.py --start-date 20250901 --end-date 20250910
-```
-### 全期間自動検出
-```bash
-python scripts/build_raceinfo.py --all-available
-```
-## 注意点
-
-- HTML構造変更時は src/raceinfo_features.py 側で対応（本スクリプトに修正不要）。
-- 出力CSVは学習前処理（master.csv）生成で使用される。
-- .bin ファイル名に日付が含まれない場合は警告を出力しスキップ。
-- 処理完了後、全出力CSVの行数合計を概算表示。
-
-## ✅ 要約:
-
-- racelist .bin を日単位で集約し、src/raceinfo_features.py に定義された解析関数を呼び出して
-- 「当日のレース情報スナップショット」をCSV出力するシンプルなドライバ。
+### 入口（called_by）との関係
+- **日次収集～中間生成**: `batch/run_scrape_build_raceinfo_range.ps1`（`scrape.py` → `build_raw_csv.py` → `build_raceinfo.py`）。
+- **学習用マスタ生成**: `batch/build_master_range.ps1`（`preprocess*.py` 群 + `make_master_finals.py`）。
+- **学習/チューニング**: `batch/train_model_from_master.ps1`（`preprocess_base_features.py`, `train.py`, `tune_hyperparams.py`）。
+- **事前分布更新**: `batch/update_priors.ps1`（季節/展示系 prior 生成）。
+- **Vault運用**: `batch/run_all_vaults_full_rebuild.ps1`, `batch/run_html_vault_full_rebuild.ps1`（`vault_csv_by_pattern.py`）。
+- **リアルタイム系**: GUI/手動実行で `scrape_one_race.py`, `build_live_row.py`, `predict_one_race.py`, `run_odds_scheduler.py` を利用。
 
 ---
-# scripts/build_raw_csv.py の役割
 
-Boatrace公式の保存済みHTML（`.bin`）から、**日次の “raw” データ** と **“refund（払戻）” データ** を生成します。  
-入力は `data/html/{pay,index,racelist,pcexpect,beforeinfo,raceresult,raceindex}` にある当日分の `.bin` 群、  
-出力は `data/raw/YYYYMMDD_raw.csv` と `data/refund/YYYYMMDD_refund.csv` です。
+## B. 全体カタログ（1行=1スクリプト）
 
-## 主な仕様
+| script | category | called_by | inputs | outputs | schedule | notes |
+|---|---|---|---|---|---|---|
+| `__init__.py` | ops | import時 | - | - | - | パッケージマーカー |
+| `scrape.py` | ingest | `run_scrape_build_raceinfo_range.ps1`/手動 | boatrace公式HTML | `data/html/*/*.bin` | 日次 | 通信依存 |
+| `build_raw_csv.py` | transform | `run_scrape_build_raceinfo_range.ps1` | `data/html/*/*.bin` | `data/raw/*_raw.csv`, `data/refund/*_refund.csv` | 日次 | 重め |
+| `build_raceinfo.py` | transform | `run_scrape_build_raceinfo_range.ps1` | `data/html/racelist/*.bin` | `data/processed/raceinfo/raceinfo_*.csv` | 日次 | 欠損日はskip |
+| `preprocess.py` | feature | `build_master_range.ps1` | `data/raw` + `data/priors` | `data/processed/master.csv` | 日次/随時 | 中核処理 |
+| `preprocess_course.py` | feature | `build_master_range.ps1` | `master.csv`, `data/raw` | `data/processed/course/master_course.csv` | 随時 | 履歴窓あり |
+| `preprocess_sectional.py` | feature | `build_master_range.ps1` | `master.csv`, `raceinfo` | `master.csv`(上書き) | 随時 | 破壊的更新 |
+| `preprocess_motor_id.py` | feature/qc | `build_master_range.ps1` | `master.csv`, motor map | motor_id付与CSV | 随時 | miss率閾値 |
+| `preprocess_motor_section.py` | feature/qc | `build_master_range.ps1` | `master.csv`, motor section特徴 | `out_master_csv` | 随時 | キー厳密結合 |
+| `make_master_finals.py` | transform | `build_master_range.ps1` | `master.csv` | `master_finals.csv` | 学習前 | finals抽出 |
+| `preprocess_base_features.py` | feature | `train_model_from_master.ps1`/手動 | `master(_finals).csv`, YAML | 学習用中間CSV | 学習前 | 列選択仕様に依存 |
+| `train.py` | train | `train_model_from_master.ps1`/手動 | `data/processed/*` | モデル成果物 | 学習時 | 重い |
+| `tune_hyperparams.py` | train | 手動/学習バッチ | 特徴量データ | チューニング結果 | 必要時 | 長時間 |
+| `predict_one_race.py` | infer | GUI/手動 | `data/live/raw_*.csv` | 標準出力/予測結果 | レース前 | モデル整合が必要 |
+| `scrape_one_race.py` | ingest/live | GUI/手動 | boatrace公式（1R） | `data/live/html/*` | レース前 | 通信依存 |
+| `build_live_row.py` | transform/live | GUI/手動 | `data/live/html` or online | `data/live/raw_*.csv` | レース前 | ST異常で停止 |
+| `build_timeline_live.py` | ops/live | 手動 | 開催情報 | `data/timeline/*.csv`（推定） | 日次 | 要確認 |
+| `run_odds_scheduler.py` | ops/live | 手動 | timeline, python実行環境 | scrape/predict呼び出し | レース日 | 常駐系 |
+| `scrape_odds.py` | ingest/live | `run_odds_scheduler.py`/手動 | oddsページ | oddsキャッシュ | レース前 | 要確認 |
+| `build_tenji_prior_from_raw.py` | feature | `update_priors.ps1` | `data/raw` | `data/priors/tenji/*.csv` | 定期更新 | prior更新 |
+| `build_season_course_prior_from_raw.py` | feature | `update_priors.ps1` | `data/raw` | `data/priors/season_course/*.csv` | 定期更新 | 範囲指定必須 |
+| `build_season_winningtrick_prior_from_raw.py` | feature | `update_priors.ps1` | `data/raw` | `data/priors/winning_trick/*.csv` | 定期更新 | 範囲指定必須 |
+| `build_motor_artifacts_from_bins.py` | feature | `run_build_motor_pipeline.ps1`/手動 | HTML bins/履歴 | motor snapshot/map CSV | 定期更新 | 重い |
+| `build_raw_with_motor_joined.py` | transform | `run_build_motor_pipeline.ps1`/手動 | raw + motor artifact | join済みraw | 定期更新 | サンプル出力あり |
+| `build_motor_section_base.py` | feature | `run_build_motor_pipeline.ps1`/手動 | master系CSV | motor section base | 定期更新 | 集約前段 |
+| `build_motor_section_features_n.py` | feature | `run_build_motor_pipeline.ps1`/手動 | section base CSV | N窓特徴CSV | 定期更新 | mean_ns指定 |
+| `export_base_feature_yaml.py` | ops | 手動 | `master.csv` | feature YAML | 必要時 | 設定出力 |
+| `vault_csv_by_pattern.py` | ops | vault系バッチ | 任意CSV/HTML | sqlite vault | 定期/随時 | I/O大 |
+| `export_vault.py` | ops | 手動 | sqlite vault | CSVエクスポート | 随時 | pattern抽出 |
 
-- 入力日付: `--date`（`YYYY-MM-DD` or `YYYYMMDD`、未指定なら当日）
-- 参照HTML:
-  - **pay**: 開催場・場コード・グレード/タイプ/属性
-  - **index**: 開催タイトル、会期（初日/最終日/○日目→数値化）、日程
-  - **racelist**: 出走表（登録番号・級別・支部/出身・年齢/体重 など）
-  - **pcexpect**: 予想印、レース名、進入固定/安定板使用の条件
-  - **beforeinfo**: 展示・気象（展示タイム、部品交換、気温/風/水温/波高/風向 など）
-  - **raceresult**: 結果（着、ST、ST順位、払い戻し、備考）
-  - **raceindex**: 性別（女性/男性/不明）推定
-- 1日ぶんの全「場 × 12R」を処理
-  - 中間成果は `data/{race_id}_raw.pickle`・`..._refund.pickle` に一時保存 → 最後に日次CSVへ結合
-- 列正規化
-  - 日本語列名を学習ノート準拠にリネーム（例: `展示 タイム→time_tenji`, `チルト→Tilt` など）
-  - `section_id = YYYYMMDD_code` を付与（集計キー）
-- エラー/欠落ハンドリング
-  - 荒天・不成立・展示欠落などはログ出力しつつ継続
-  - 最後に一時pickleを削除
-
-## 処理フロー（要点）
-
-1. **pay / index** を読み、開催一覧（`place, code, race_grade, race_type, race_attribute, title, day, section, schedule`）を作成  
-2. 各 `code × R(1..12)` について `race_id = YYYYMMDD + code + RR` を組み立て  
-3. **racelist** から選手・F/L/ST平均・機/ボート成績を抽出して `raw` を構成  
-4. **pcexpect** で予想印・レース名・進入固定/安定板使用を付加  
-5. **beforeinfo** で展示（`entry_tenji, ST_tenji`）と気象を付加  
-6. **raceresult** で `rank, ST, ST_rank, winning_trick, henkan_ticket, remarks` を付加  
-7. **raceindex** で `sex` を推定して付加  
-8. 場コードで開催情報を結合、`wakunari` 判定、日次pickleを後で結合  
-9. 最終的に **raw/refund の日次CSV** を保存
-
-## 出力
-
-- `data/raw/YYYYMMDD_raw.csv`
-  - 主要列（例）:  
-    `race_id, date, code, R, wakuban, player, player_id, AB_class, age, weight, team, origin, run_once, F, L, ST_mean, motor_number, motor_2rentai_rate, boat_number, boat_2rentai_rate, entry_tenji, ST_tenji, time_tenji, Tilt, propeller, parts_exchange, counter_weight, temperature, weather, wind_speed, wind_direction, water_temperature, wave_height, title, day, section, schedule, race_grade, race_type, race_attribute, timetable, rank, ST, ST_rank, winning_trick, henkan_ticket, remarks, sex, is_wakunari, section_id`
-- `data/refund/YYYYMMDD_refund.csv`
-  - 払戻テーブルをレースID付きでフラット化
-
-## 実行例
-
-```bash
-# 当日分を処理（デフォルト: “今日”）
-python scripts/build_raw_csv.py
-
-# 任意日付を処理
-python scripts/build_raw_csv.py --date 2025-09-07
-# または
-python scripts/build_raw_csv.py --date 20250907
-```
-## 注意点
-
-- .bin はあらかじめ data/html/**/ に存在している前提
-- 途中でHTML欠落・構造差異があっても、可能な範囲で処理を継続（ログに警告）
-- 気象0:00現在など情報が無い場合は適切に N/A/欠損で充填
-- 最終行で一時pickleを掃除（data/*.pickle）
 ---
-# scripts/build_season_course_prior_from_raw.py の役割
 
-`data/raw/*.csv`（日次raw）を結合し、**季節×場×進入コース（entry）別の入着率 prior** を生成するスクリプト。  
-完走（1〜6着の数値着）だけを分母・分子に計上し、DNS/欠/落/転/妨/F/L 等は除外。  
-同一 **season_q × entry** の**全場平均**を基準として、**差分（adv_）** と **対数比（lr_）** による相対化も出力します。
+## C. カテゴリ別セクション（俯瞰）
 
-## 主な仕様
-
-- 入力: `data/raw/*.csv`（`preprocess.load_raw` で結合、`cast_and_clean` で型正規化）
-- 期間: `--from YYYYMMDD` 〜 `--to YYYYMMDD`（両端含む, inclusive）
-- 集計キー: `place, entry(1..6), season_q(spring/summer/autumn/winter)`
-- 出力列（主要）
-  - 件数: `n_finished, c1..c6`
-  - 絶対率: `p1..p6`（0〜1）
-  - 基準（全場平均）: `base_p1..base_p6`
-  - 差分: `adv_p1..adv_p6 = p* - base_p*`
-  - 対数比: `lr_p1..lr_p6 = log((p*+eps)/(base_p*+eps))`, `eps = 1/(n_finished + m_strength + 1)`
-- 平滑化（任意）: `--m-strength m`（Dirichlet 等配、m=0 で平滑化なし）
-
-## 列自動検出
-
-- 着順列: `rank/arrival/chakujun/chaku/finish/finish_order` のいずれかを自動検出（`--finish-col` 明示指定も可）
-- 進入コース列: `entry/course` を自動検出（`--entry-col` 明示指定も可）
-- 全角数字は半角へ正規化、`entry` と `rank` はそれぞれ 1..6 のみ採用
-
-## 出力の意味
-
-- `p1..p6`: その **場×entry×季節** の素の入着率  
-  - m=0（デフォルト）: `p_k = c_k / n_finished`  
-  - m>0（平滑化）: `p_k = (c_k + m/6) / (n_finished + m)`
-- `base_p1..base_p6`: 同一 `season_q × entry` の **全場平均**（ベースライン）
-- `adv_p*`: ベースからの差（+なら相対的に強い）
-- `lr_p*`: ベースとの比の対数（ロバストな相対指標）
-
-## ファイルI/O
-
-- 出力: `--out` で指定（例: `data/priors/season_course/20240101_20250630.csv` 推奨）
-- 便利機能: `--link-latest` を付けると同ディレクトリに `latest.csv` を上書き作成
-
-## コマンドライン引数
-
-| 引数 | 必須 | 説明 | 例 |
-|---|:---:|---|---|
-| `--raw-dir` |  | raw日次CSVのディレクトリ | `data/raw` |
-| `--from` | ✅ | 開始日（YYYYMMDD） | `20240101` |
-| `--to` | ✅ | 終了日（YYYYMMDD） | `20250630` |
-| `--finish-col` |  | 着順列名（未指定は自動検出） | `rank` |
-| `--entry-col` |  | 進入コース列名（未指定は自動検出） | `entry` |
-| `--m-strength` |  | Dirichlet疑似件数m（0=なし） | `50` |
-| `--out` | ✅ | 出力CSVパス | `data/priors/season_course/2024H1.csv` |
-| `--link-latest` |  | `latest.csv` を作成/更新 | `--link-latest` |
-
-## 実行例
-
-```bash
-# 2024年〜2025年6月までの prior（平滑化なし）
-python scripts/build_season_course_prior_from_raw.py ^
-  --raw-dir data/raw ^
-  --from 20240101 --to 20250630 ^
-  --out data/priors/season_course/20240101_20250630.csv ^
-  --link-latest
-
-# 2025年上半期、m=60 の等配平滑化で安定化
-python scripts/build_season_course_prior_from_raw.py ^
-  --from 20250101 --to 20250630 ^
-  --m-strength 60 ^
-  --out data/priors/season_course/2025H1_m60.csv
+### 1) ingest / live ingest
 ```
-## 生成されるカラム（順序）
-```bash
-place, entry, season_q, n_finished,
-c1..c6, p1..p6, base_p1..base_p6, adv_p1..adv_p6, lr_p1..lr_p6,
-built_from, built_to, m_strength, keys, version
+scrape.py ─┬─> data/html/*
+           └─> build_raw_csv.py
+scrape_one_race.py -> data/live/html/* -> build_live_row.py
 ```
-## 注意点
+- 公式サイト依存。通信エラー時は再試行前提。
+- live 系はレース時刻制約があるため、ログ監視を優先。
 
-- 期間内に行が無い場合は、利用可能期間をエラーメッセージで案内します
-- version=3（相対化列を追加した版）
-- 生成物は 学習の事前参照（prior） や 特徴量の外部結合 に使用可能（place×entry×season_q で join）
+### 2) transform / feature
+```
+build_raw_csv -> preprocess.py -> preprocess_course/sectional/motor_* -> master.csv
+                                                   └-> make_master_finals.py
+raw -> prior builders -> preprocess.py(結合)
+```
+- 学習用の主系統。`preprocess_sectional.py` は上書き更新のためバックアップ推奨。
+
+### 3) train / infer
+```
+master(_finals) -> preprocess_base_features -> train / tune_hyperparams
+live raw -> predict_one_race
+```
+- 学習成果物の版管理（approach/model id）を運用ルール化する。
+
+### 4) ops / vault / QC
+```
+vault_csv_by_pattern -> sqlite vault -> export_vault
+run_odds_scheduler -> scrape_odds / 予測呼び出し
+```
+- 定期実行系。lock/log 監視とディスク容量管理が重要。
+
+---
+
+## D. 個別ページ（辞典本体）
+
+> 記載の一部はコード読解ベースの推定です。断定困難な点は **要確認** と明記。
+
+### `scripts/__init__.py`
+- 概要: `scripts` ディレクトリをPythonパッケージとして扱うためのファイル。
+- 役割: import解決。
+- called_by: Python import時。
+- 入出力: なし。
+- 主な引数: なし。
+- 実行例: `python -c "import scripts"`
+- 依存関係: なし。
+- 失敗しやすい点: 直接実行用途ではない。
+- 実行コスト: 軽い。
+
+### `scripts/scrape.py`
+- 概要: 指定日の公式HTMLを一括取得してbin保存。
+- 役割: `pay/index/racelist/...` の収集。
+- called_by: `batch/run_scrape_build_raceinfo_range.ps1`。
+- 入出力: `--date` → `data/html/*/*.bin`。
+- 主な引数:
+
+| name | required | default | meaning |
+|---|---:|---|---|
+| `--date` | no | 当日 | 取得日 |
+
+- 実行例: `python scripts/scrape.py --date 20250115`
+- 依存関係: 下流 `build_raw_csv.py`, `build_raceinfo.py`。
+- 失敗と対処: 通信エラー→再実行。ディレクトリ欠如→作成。
+- 実行コスト: 中～重（対象日件数依存）。
+
+### `scripts/build_raw_csv.py`
+- 概要: HTML bin から日次 raw/refund CSV を構築。
+- 役割: 学習の基礎データ生成。
+- called_by: `run_scrape_build_raceinfo_range.ps1`。
+- 入出力: `data/html/*` → `data/raw/YYYYMMDD_raw.csv`, `data/refund/YYYYMMDD_refund.csv`。
+- 主な引数: `--date`（任意、当日既定）。
+- 実行例: `python scripts/build_raw_csv.py --date 20250115`
+- 依存関係: 上流 `scrape.py`。
+- 失敗と対処: 欠損binはログ確認し該当日再scrape。
+- 実行コスト: 重い（全場×R処理）。
+
+### `scripts/build_raceinfo.py`
+- 概要: racelist bin から raceinfo 日次CSVを生成。
+- 役割: sectional系特徴の源泉を作成。
+- called_by: `run_scrape_build_raceinfo_range.ps1`。
+- 入力/出力: `data/html/racelist/*.bin` → `data/processed/raceinfo/raceinfo_YYYYMMDD.csv`。
+- 主な引数:
+
+| name | required | default | meaning |
+|---|---:|---|---|
+| `--date` | no | - | 単日 |
+| `--start-date` | no | - | 開始日 |
+| `--end-date` | no | - | 終了日 |
+| `--all-available` | no | false | 利用可能日を自動処理 |
+| `--html-dir` | no | `data/html/racelist` | 入力 |
+| `--out-dir` | no | `data/processed/raceinfo` | 出力 |
+
+- 実行例: `python scripts/build_raceinfo.py --start-date 20250101 --end-date 20250131`
+- 依存関係: 下流 `preprocess_sectional.py`。
+- 失敗と対処: bin未検出日はskip（要ログ確認）。
+- 実行コスト: 中。
+
+### `scripts/preprocess.py`
+- 概要: raw から学習用 `master.csv` を生成し prior を結合。
+- 役割: 特徴量基盤の統合。
+- called_by: `batch/build_master_range.ps1`。
+- 入出力: `data/raw`, `data/priors` → `data/processed/master.csv`。
+- 主な引数: `--raw-dir`, `--out`, `--reports-dir`, `--priors-root`, `--start-date`, `--end-date`, `--no-join-*`。
+- 実行例: `python scripts/preprocess.py --start-date 20250101 --end-date 20250131`
+- 依存関係: 下流 course/sectional/motor 系。
+- 失敗と対処: prior欠損時は `--no-join-*` で切り分け。
+- 実行コスト: 重い。
+
+### `scripts/preprocess_course.py`
+- 概要: コース履歴系特徴を計算。
+- 役割: `master_course.csv` 出力。
+- called_by: `build_master_range.ps1`。
+- 入出力: `master.csv`, `data/raw` → `data/processed/course/master_course.csv`。
+- 主な引数: `--master`, `--raw-dir`, `--out`, `--warmup-days`, `--n-last` 他。
+- 実行例: `python scripts/preprocess_course.py --warmup-days 180 --n-last 10`
+- 依存関係: 上流 `preprocess.py`。
+- 失敗と対処: 期間不足で特徴欠落（要確認）。
+- 実行コスト: 中。
+
+### `scripts/preprocess_sectional.py`
+- 概要: raceinfo を master に上書き結合し sectional列を補完。
+- 役割: 必須列の埋め戻し。
+- called_by: `build_master_range.ps1`。
+- 入出力: `master.csv`, `raceinfo` → `master.csv`（既定上書き）。
+- 主な引数: `--master`, `--raceinfo-dir`, `--date/start-date/end-date`, `--out`。
+- 実行例: `python scripts/preprocess_sectional.py --start-date 20250101 --end-date 20250131`
+- 依存関係: 上流 `build_raceinfo.py`。
+- 失敗と対処: 上書き前バックアップ推奨。
+- 実行コスト: 中。
+
+### `scripts/preprocess_motor_id.py`
+- 概要: motor番号に対して一意IDを付与。
+- 役割: motor特徴結合キー整備。
+- called_by: `build_master_range.ps1`。
+- 入出力: `--in_csv`, `--map_csv` → `--out_csv`。
+- 主な引数: `--in_csv`(必須), `--map_csv`, `--max_miss_rate` 他。
+- 実行例: `python scripts/preprocess_motor_id.py --in_csv data/processed/master.csv`
+- 依存関係: 下流 `preprocess_motor_section.py`。
+- 失敗と対処: miss率超過で停止（マップ更新）。
+- 実行コスト: 軽い。
+
+### `scripts/preprocess_motor_section.py`
+- 概要: motor section特徴を master に安全結合。
+- 役割: `motor_*` 列の追加。
+- called_by: `build_master_range.ps1`。
+- 入出力: `master_csv`, `motor_section_csv` → `out_master_csv`。
+- 主な引数: `--master_csv`, `--motor_section_csv`, `--out_master_csv`(必須), `--strict_key_match` 他。
+- 実行例: `python scripts/preprocess_motor_section.py --master_csv ... --motor_section_csv ... --out_master_csv ...`
+- 依存関係: 上流 motor pipeline。
+- 失敗と対処: キー不整合はQCレポートで確認。
+- 実行コスト: 中。
+
+### `scripts/make_master_finals.py`
+- 概要: masterから finals 系のみ抽出。
+- 役割: `master_finals.csv` 生成。
+- called_by: `build_master_range.ps1`。
+- 入出力: `master.csv` → `master_finals.csv`。
+- 主な引数: `--master-in`, `--master-out`, `--stage-filter`。
+- 実行例: `python scripts/make_master_finals.py`
+- 依存関係: 下流学習。
+- 失敗と対処: stage列欠損時は前段確認。
+- 実行コスト: 軽い。
+
+### `scripts/preprocess_base_features.py`
+- 概要: 学習用の列選択・特徴加工。
+- 役割: approach別の入力データ整形。
+- called_by: `train_model_from_master.ps1`/手動。
+- 入出力: `--master`, `--feature-spec-yaml` → `data/processed`配下成果物。
+- 主な引数: `--master`, `--feature-spec-yaml`, `--approach`(必須), `--target-col` 他。
+- 実行例: `python scripts/preprocess_base_features.py --master data/processed/master_finals.csv --feature-spec-yaml configs/base.yaml --approach finals`
+- 依存関係: 下流 `train.py`。
+- 失敗と対処: YAML列不一致は `--allow-missing-selected-cols` で検証。
+- 実行コスト: 中。
+
+### `scripts/train.py`
+- 概要: モデル学習を実行。
+- 役割: approach別モデル生成。
+- called_by: `train_model_from_master.ps1`/手動。
+- 入出力: `data/processed/*` → モデル・メタ情報（要確認）。
+- 主な引数: `--approach`, `--n-estimators`, `--learning-rate`, `--num-leaves` 他。
+- 実行例: `python scripts/train.py --approach finals --n-estimators 400`
+- 依存関係: 上流 `preprocess_base_features.py`。
+- 失敗と対処: 特徴量欠損/クラス不均衡ログを確認。
+- 実行コスト: 重い。
+
+### `scripts/tune_hyperparams.py`
+- 概要: ハイパーパラメータ探索。
+- 役割: 学習設定の最適化。
+- called_by: 手動/学習バッチ。
+- 入出力: 学習データ → 探索結果ファイル（`--out`）。
+- 主な引数: `--approach`, `--n-iter`, `--scoring`, `--out`, `--project-root`。
+- 実行例: `python scripts/tune_hyperparams.py --approach finals --n-iter 80`
+- 依存関係: `train.py` と同一データ基盤。
+- 失敗と対処: 実行時間超過は `--n-iter` 縮小。
+- 実行コスト: 重い（長時間）。
+
+### `scripts/predict_one_race.py`
+- 概要: 1レース分 live raw から推論。
+- 役割: レース前予測の生成。
+- called_by: GUI/手動。
+- 入出力: `--live-csv` → 標準出力（予測結果）。
+- 主な引数: `--live-csv`(必須), `--approach`, `--model`, `--feature-pipeline`, `--quiet` 他。
+- 実行例: `python scripts/predict_one_race.py --live-csv data/live/raw_20250903_12_03.csv --approach base`
+- 依存関係: 上流 `build_live_row.py`。
+- 失敗と対処: モデル/特徴量版不一致に注意。
+- 実行コスト: 軽い。
+
+### `scripts/scrape_one_race.py`
+- 概要: 1レース対象のHTML群を収集。
+- 役割: live推論前の素材取得。
+- called_by: GUI/手動。
+- 入出力: `--date --jcd --race` → `data/live/html/*`。
+- 主な引数: 全て必須（`--date`, `--jcd`, `--race`）。
+- 実行例: `python scripts/scrape_one_race.py --date 20250903 --jcd 12 --race 3`
+- 依存関係: 下流 `build_live_row.py`。
+- 失敗と対処: 取得漏れは再実行。
+- 実行コスト: 軽い。
+
+### `scripts/build_live_row.py`
+- 概要: live HTMLから raw互換6行を生成。
+- 役割: 推論入力CSV作成。
+- called_by: GUI/手動。
+- 入出力: `data/live/html/*` or `--online` → `data/live/raw_*.csv`。
+- 主な引数: `--date --jcd --race`(必須), `--online`, `--out`。
+- 実行例: `python scripts/build_live_row.py --date 20250903 --jcd 12 --race 3 --online --out data/live/raw_20250903_12_03.csv`
+- 依存関係: 下流 `predict_one_race.py`。
+- 失敗と対処: ST非数値時は停止（入力確認）。
+- 実行コスト: 軽い。
+
+### `scripts/build_timeline_live.py`
+- 概要: live運用用タイムラインを作る補助スクリプト。
+- 役割: スケジューラ入力生成（推定）。
+- called_by: 手動。
+- 入出力: `--date` → `data/timeline/*`（要確認）。
+- 主な引数: `--date`。
+- 実行例: `python scripts/build_timeline_live.py --date 20250903`
+- 依存関係: `run_odds_scheduler.py` で参照される可能性。
+- 失敗と対処: 出力パス/フォーマットは要確認。
+- 実行コスト: 軽い。
+
+### `scripts/run_odds_scheduler.py`
+- 概要: タイムラインに従って odds/予測処理を起動するランナー。
+- 役割: レース当日の定期実行。
+- called_by: 手動（常駐起動）。
+- 入出力: `--timeline`, `--python`, `--log_file`。
+- 主な引数: `--timeline`, `--mins_before`(既定5), `--python`, `--log_file`。
+- 実行例: `python scripts/run_odds_scheduler.py --timeline data/timeline/20250903.csv --mins_before 5`
+- 依存関係: `scrape_odds.py` 等（コード読解推定）。
+- 失敗と対処: 長時間運用時のログローテート必須。
+- 実行コスト: 中（常駐）。
+
+### `scripts/scrape_odds.py`
+- 概要: 指定レースのodds情報を取得。
+- 役割: 直前オッズ連携。
+- called_by: scheduler/手動。
+- 入出力: `--date --jcd --rno` → odds関連出力（要確認）。
+- 主な引数: 全て必須。
+- 実行例: `python scripts/scrape_odds.py --date 20250903 --jcd 12 --rno 3`
+- 依存関係: live推論補助。
+- 失敗と対処: 通信系再試行。
+- 実行コスト: 軽い。
+
+### `scripts/build_tenji_prior_from_raw.py`
+- 概要: 展示ST系 prior を raw から推定。
+- 役割: priorデータ更新。
+- called_by: `update_priors.ps1`。
+- 入出力: `data/raw` → `data/priors/tenji/*.csv`。
+- 主な引数: `--from --to --out`(必須), `--m-strength`, `--sd-floor`, `--link-latest`。
+- 実行例: `python scripts/build_tenji_prior_from_raw.py --from 20240101 --to 20241231 --out data/priors/tenji/tenji_prior_20241231.csv`
+- 依存関係: 下流 `preprocess.py`。
+- 失敗と対処: 期間列型不一致に注意。
+- 実行コスト: 中。
+
+### `scripts/build_season_course_prior_from_raw.py`
+- 概要: season×course の prior を作成。
+- 役割: コース傾向補正の事前分布更新。
+- called_by: `update_priors.ps1`。
+- 入出力: `data/raw` → `data/priors/season_course/*.csv`。
+- 主な引数: `--from --to --out`(必須), `--finish-col`, `--entry-col`, `--m-strength` 他。
+- 実行例: `python scripts/build_season_course_prior_from_raw.py --from 20240101 --to 20241231 --out data/priors/season_course/season_course_prior_20241231.csv`
+- 依存関係: `preprocess.py`。
+- 失敗と対処: 列名差異は引数で調整。
+- 実行コスト: 中。
+
+### `scripts/build_season_winningtrick_prior_from_raw.py`
+- 概要: season×決まり手 prior を生成。
+- 役割: 勝ちパターン事前分布更新。
+- called_by: `update_priors.ps1`。
+- 入出力: `data/raw` → `data/priors/winning_trick/*.csv`。
+- 主な引数: `--from --to --out`(必須), `--trick-col`, `--m-strength` 他。
+- 実行例: `python scripts/build_season_winningtrick_prior_from_raw.py --from 20240101 --to 20241231 --out data/priors/winning_trick/winning_trick_prior_20241231.csv`
+- 依存関係: `preprocess.py`。
+- 失敗と対処: trick列欠損時に要確認。
+- 実行コスト: 中。
+
+### `scripts/build_motor_artifacts_from_bins.py`
+- 概要: motor関連のsnapshot/map成果物をbin由来で生成。
+- 役割: motor ID・遷移の基盤作成。
+- called_by: `run_build_motor_pipeline.ps1`/手動。
+- 入出力: `--bins_dir` → `--out_snapshot_csv`, `--out_map_csv`。
+- 主な引数: 上記3必須 + `--gap_days`, `--no_use_transition`, `--start_date`, `--end_date`, `--limit`。
+- 実行例: `python scripts/build_motor_artifacts_from_bins.py --bins_dir data/html/racelist --out_snapshot_csv data/processed/motor/snapshot.csv --out_map_csv data/processed/motor/motor_id_map__all.csv`
+- 依存関係: 下流 `preprocess_motor_id.py`, `build_raw_with_motor_joined.py`。
+- 失敗と対処: 大量データ時は `--limit` で試験実行。
+- 実行コスト: 重い。
+
+### `scripts/build_raw_with_motor_joined.py`
+- 概要: rawにmotor artifactを結合した派生データを生成。
+- 役割: motor強化版rawの出力。
+- called_by: motor pipeline バッチ/手動。
+- 入出力: `--raw_dir`, `--snapshot_csv`, `--map_csv` → `--out_dir`。
+- 主な引数: 上記4必須 + `--write_full_csv`, `--sample_n`。
+- 実行例: `python scripts/build_raw_with_motor_joined.py --raw_dir data/raw --snapshot_csv ... --map_csv ... --out_dir data/processed/motor`
+- 依存関係: 上流 motor artifacts。
+- 失敗と対処: 結合率低下時はmap更新確認。
+- 実行コスト: 中～重。
+
+### `scripts/build_motor_section_base.py`
+- 概要: motor section特徴のベース集約を作成。
+- 役割: N窓特徴の前段データ生成。
+- called_by: `run_build_motor_pipeline.ps1`/手動。
+- 入出力: `--input` → `--out_csv`。
+- 主な引数: `--input`, `--out_csv`(必須) + 列名指定群。
+- 実行例: `python scripts/build_motor_section_base.py --input data/processed/master.csv --out_csv data/processed/motor/motor_section_base.csv`
+- 依存関係: 下流 `build_motor_section_features_n.py`。
+- 失敗と対処: 列名差異は *_col 引数で調整。
+- 実行コスト: 中。
+
+### `scripts/build_motor_section_features_n.py`
+- 概要: section base から N窓平均特徴を展開。
+- 役割: `motor_section_features` の本体生成。
+- called_by: `run_build_motor_pipeline.ps1`/手動。
+- 入出力: `--input` → `--out_csv`。
+- 主な引数: `--input`, `--out_csv`(必須), `--mean_ns`(既定`3,5`) 他。
+- 実行例: `python scripts/build_motor_section_features_n.py --input ... --out_csv ... --mean_ns 3,5,10`
+- 依存関係: 下流 `preprocess_motor_section.py`。
+- 失敗と対処: section日付列の型ズレに注意。
+- 実行コスト: 中。
+
+### `scripts/export_base_feature_yaml.py`
+- 概要: masterからベース特徴量YAMLを出力。
+- 役割: feature spec初期化。
+- called_by: 手動。
+- 入出力: `--master` → `--out`。
+- 主な引数: `--master`, `--out`（必須）。
+- 実行例: `python scripts/export_base_feature_yaml.py --master data/processed/master.csv --out configs/base_features.yaml`
+- 依存関係: 下流 `preprocess_base_features.py`。
+- 失敗と対処: 目的列混入に注意。
+- 実行コスト: 軽い。
+
+### `scripts/vault_csv_by_pattern.py`
+- 概要: パターン一致CSV/binをsqlite vaultへ取り込み。
+- 役割: 可搬アーカイブ作成。
+- called_by: `run_all_vaults_full_rebuild.ps1`, `run_html_vault_full_rebuild.ps1`。
+- 入出力: `--input-dir` + pattern条件 → `--db`。
+- 主な引数: `--db`(必須), `--glob`, `--regex`, `--all`, `--start/end`, `--gzip` 他。
+- 実行例: `python scripts/vault_csv_by_pattern.py --input-dir data/raw --db data/sqlite/vault.sqlite --regex '^(?P<ymd>\d{8})_raw\.csv$' --all --gzip`
+- 依存関係: 下流 `export_vault.py`。
+- 失敗と対処: DB肥大化時はVACUUM。
+- 実行コスト: 重い（I/O大）。
+
+### `scripts/export_vault.py`
+- 概要: sqlite vault からCSVを書き出し。
+- 役割: 共有/検証向けエクスポート。
+- called_by: 手動。
+- 入出力: `--db`, `--dest` → CSV群。
+- 主な引数: `--db`(必須), `--dest`(必須), `--pattern`, `--limit`。
+- 実行例: `python scripts/export_vault.py --db data/sqlite/csv_vault_2025Q3_compact.sqlite --dest out/vault --pattern '202501.*'`
+- 依存関係: 上流 `vault_csv_by_pattern.py`。
+- 失敗と対処: pattern誤りで0件（条件確認）。
+- 実行コスト: 中。
+
+## 付録: 対象スクリプト確定リスト（29件）
+
+1. `scripts/__init__.py`
+2. `scripts/build_live_row.py`
+3. `scripts/build_motor_artifacts_from_bins.py`
+4. `scripts/build_motor_section_base.py`
+5. `scripts/build_motor_section_features_n.py`
+6. `scripts/build_raceinfo.py`
+7. `scripts/build_raw_csv.py`
+8. `scripts/build_raw_with_motor_joined.py`
+9. `scripts/build_season_course_prior_from_raw.py`
+10. `scripts/build_season_winningtrick_prior_from_raw.py`
+11. `scripts/build_tenji_prior_from_raw.py`
+12. `scripts/build_timeline_live.py`
+13. `scripts/export_base_feature_yaml.py`
+14. `scripts/export_vault.py`
+15. `scripts/make_master_finals.py`
+16. `scripts/predict_one_race.py`
+17. `scripts/preprocess.py`
+18. `scripts/preprocess_base_features.py`
+19. `scripts/preprocess_course.py`
+20. `scripts/preprocess_motor_id.py`
+21. `scripts/preprocess_motor_section.py`
+22. `scripts/preprocess_sectional.py`
+23. `scripts/run_odds_scheduler.py`
+24. `scripts/scrape.py`
+25. `scripts/scrape_odds.py`
+26. `scripts/scrape_one_race.py`
+27. `scripts/train.py`
+28. `scripts/tune_hyperparams.py`
+29. `scripts/vault_csv_by_pattern.py`
+
+> ユーザー認識の 29 件と一致。
