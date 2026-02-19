@@ -17,6 +17,7 @@ import hashlib
 import json
 import subprocess
 import sys
+
 from datetime import datetime
 from pathlib import Path
 
@@ -109,6 +110,31 @@ def get_git_commit(repo_root: Path) -> str:
         return ""
 
 
+def _try_yaml():
+    try:
+        import yaml  # type: ignore
+
+        return yaml
+    except Exception:
+        return None
+
+
+def load_lgbm_params_yaml(params_yaml_path: Path) -> dict:
+    y = _try_yaml()
+    if y is None:
+        raise RuntimeError(
+            "PyYAML が見つかりません。--lgbm-params-yaml を使う場合は PyYAML をインストールしてください。"
+        )
+    with open(params_yaml_path, "r", encoding="utf-8") as f:
+        data = y.safe_load(f) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"LGBM params YAML must be a mapping: {params_yaml_path}")
+    params = data.get("lgbm_params", data)
+    if not isinstance(params, dict):
+        raise ValueError(f"lgbm_params must be a mapping: {params_yaml_path}")
+    return params
+
+
 def time_split_indices(ids_df: pd.DataFrame, ratio: float = 0.8):
     """race_id の時間順（登場順）でホールドアウト分割。"""
     rid_order = ids_df["race_id"].astype(str).to_numpy()
@@ -166,17 +192,33 @@ def main(args):
 
     assert_feature_dim_matches(pipeline, X)
 
+    lgbm_params = {
+        "n_estimators": args.n_estimators,
+        "learning_rate": args.learning_rate,
+        "num_leaves": args.num_leaves,
+        "subsample": args.subsample,
+        "colsample_bytree": args.colsample_bytree,
+        "random_state": args.random_state,
+        "n_jobs": args.n_jobs,
+    }
+    lgbm_params_path = ""
+    lgbm_params_hash = ""
+    if args.lgbm_params_yaml:
+        lgbm_params_file = Path(args.lgbm_params_yaml)
+        if not lgbm_params_file.is_absolute():
+            lgbm_params_file = PR / lgbm_params_file
+        lgbm_params_file = lgbm_params_file.resolve()
+        if not lgbm_params_file.exists():
+            raise FileNotFoundError(f"LGBM params YAML not found: {lgbm_params_file}")
+        external_params = load_lgbm_params_yaml(lgbm_params_file)
+        lgbm_params.update(external_params)
+        lgbm_params_path = str(lgbm_params_file)
+        lgbm_params_hash = file_sha256(lgbm_params_file)
+        print(f"[INFO] merged lgbm params from: {lgbm_params_file}")
+
     # ホールドアウト評価
     tr_idx, va_idx, rid_va = time_split_indices(ids, ratio=0.8)
-    eval_clf = LGBMClassifier(
-        n_estimators=args.n_estimators,
-        learning_rate=args.learning_rate,
-        num_leaves=args.num_leaves,
-        subsample=args.subsample,
-        colsample_bytree=args.colsample_bytree,
-        random_state=args.random_state,
-        n_jobs=args.n_jobs,
-    )
+    eval_clf = LGBMClassifier(**lgbm_params)
     eval_clf.fit(X[tr_idx], y[tr_idx])
     proba_va = eval_clf.predict_proba(X[va_idx])[:, 1]
     pred_va = (proba_va >= 0.5).astype(int)
@@ -192,15 +234,7 @@ def main(args):
     print("[EVAL]", metrics_eval)
 
     # 全データで再学習
-    clf = LGBMClassifier(
-        n_estimators=args.n_estimators,
-        learning_rate=args.learning_rate,
-        num_leaves=args.num_leaves,
-        subsample=args.subsample,
-        colsample_bytree=args.colsample_bytree,
-        random_state=args.random_state,
-        n_jobs=args.n_jobs,
-    )
+    clf = LGBMClassifier(**lgbm_params)
     clf.fit(X, y)
 
     # 保存
@@ -211,6 +245,9 @@ def main(args):
         "version_tag": args.version_tag,
         "notes": args.notes,
         "git_commit": get_git_commit(PR),
+        "lgbm_params_yaml": lgbm_params_path,
+        "lgbm_params_yaml_sha256": lgbm_params_hash,
+        "lgbm_params": lgbm_params,
         "n_rows": int(X.shape[0]),
         "n_features": int(X.shape[1]),
         "sparse": bool(issparse(X)),
@@ -238,5 +275,6 @@ if __name__ == "__main__":
     ap.add_argument("--version-tag", type=str, default="", help="モデルのバージョンタグ")
     ap.add_argument("--notes", type=str, default="", help="任意の説明文")
     ap.add_argument("--project-root", type=str, default="", help="リポジトリルート（未指定なら自動検出）")
+    ap.add_argument("--lgbm-params-yaml", type=str, default="", help="LGBM パラメータ上書き用 YAML")
     args = ap.parse_args()
     main(args)
