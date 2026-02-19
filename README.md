@@ -44,6 +44,7 @@ ark-blueprints/
 │  └─ train_model_from_master.ps1 # 学習の入口（SSOT）
 │
 ├─ scripts/                       # 実行スクリプト群（CLI）
+│  ├─ _archive/                   # 旧multi-approach（top2pair/sectional/ensemble）退避
 │  ├─ scrape_one_race.py
 │  ├─ build_live_row.py
 │  ├─ preprocess_base_features.py
@@ -54,7 +55,7 @@ ark-blueprints/
 │  └─ predict_one_race.py
 │
 ├─ src/                           # ライブラリ層（再利用・責務分離）
-│  ├─ adapters/                   # 推論時の入力整形（base/sectional 等）
+│  ├─ adapters/                   # 推論時の入力整形（base）
 │  ├─ raceinfo_features.py        # racelist HTML → 今節スナップショット特徴量
 │  ├─ st.py                       # STパーサ
 │  └─ rank.py                     # 着順パーサ
@@ -141,4 +142,3 @@ predict_one_race.py
 - 推論GUI：運用可能
 
 本リポジトリは **「いま動いているものを壊さずに育てる」** 方針で継続開発中です。
-
