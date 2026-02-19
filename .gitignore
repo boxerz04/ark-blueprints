@@ -16,3 +16,5 @@ __pycache__/
 /*.sqlite
 /*.sqlite-wal
 /*.sqlite-shm
+
+.ipynb_checkpoints/
