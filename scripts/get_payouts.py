@@ -9,10 +9,10 @@ import aiohttp
 # 一般的なWebブラウザのUser-Agentを偽装
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 
-async def fetch_page(session, url, date_str, output_dir, semaphore, max_retries=3):
-    file_path = os.path.join(output_dir, f"{date_str}.html")
+async def fetch_page(session, url, date_str, output_dir, semaphore, overwrite=False, max_retries=3):
+    file_path = os.path.join(output_dir, f"payouts{date_str}.html")
     
-    if os.path.exists(file_path):
+    if os.path.exists(file_path) and not overwrite:
         print(f"[{date_str}] Skipping, file already exists: {file_path}")
         return True
 
@@ -58,13 +58,18 @@ async def fetch_page(session, url, date_str, output_dir, semaphore, max_retries=
                     print(f"[{date_str}] Failed after {max_retries} attempts.")
                     return False
 
-async def main(start_date_str, end_date_str):
-    start_date = datetime.strptime(start_date_str, "%Y%m%d")
-    end_date = datetime.strptime(end_date_str, "%Y%m%d")
-    
+def resolve_dir_path(path):
+    if os.path.isabs(path):
+        return path
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(script_dir)
-    output_dir = os.path.join(project_root, "data", "raw_html")
+    return os.path.join(project_root, path)
+
+
+async def main(start_date_str, end_date_str, output_dir, overwrite=False):
+    start_date = datetime.strptime(start_date_str, "%Y%m%d")
+    end_date = datetime.strptime(end_date_str, "%Y%m%d")
+
     os.makedirs(output_dir, exist_ok=True)
     
     base_url = "https://www.boatrace.jp/owpc/pc/race/pay?hd={}"
@@ -87,7 +92,7 @@ async def main(start_date_str, end_date_str):
         for date_str in dates_to_fetch:
             url = base_url.format(date_str)
             # 各日付ごとの非同期タスクを生成
-            task = asyncio.create_task(fetch_page(session, url, date_str, output_dir, semaphore))
+            task = asyncio.create_task(fetch_page(session, url, date_str, output_dir, semaphore, overwrite=overwrite))
             tasks.append(task)
             
         # 全てのタスクを並行して実行 (完了待ち)
@@ -97,6 +102,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ボートレースの払戻金ページ(HTML)を非同期で取得します。")
     parser.add_argument("--start", type=str, required=True, help="開始日 (YYYYMMDD)")
     parser.add_argument("--end", type=str, required=True, help="終了日 (YYYYMMDD)")
+    parser.add_argument("--out-dir", type=str, default="data/html/payouts", help="取得HTML保存先ディレクトリ")
+    parser.add_argument("--overwrite", action="store_true", help="既存HTMLがある場合に上書きする")
     
     args = parser.parse_args()
     
@@ -104,4 +111,5 @@ if __name__ == "__main__":
     if os.name == 'nt':
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
         
-    asyncio.run(main(args.start, args.end))
+    output_dir = resolve_dir_path(args.out_dir)
+    asyncio.run(main(args.start, args.end, output_dir, overwrite=args.overwrite))

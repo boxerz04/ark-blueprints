@@ -4,6 +4,7 @@ import argparse
 from bs4 import BeautifulSoup
 import glob
 import math
+import re
 
 def get_series_info(table_header):
     # table_header は <thead> の <tr> または <th> を想定
@@ -41,8 +42,10 @@ def parse_payouts(input_dir, output_csv_path, start_date=None, end_date=None):
     
     for html_file_path in html_files:
         filename = os.path.basename(html_file_path)
-        date_str = os.path.splitext(filename)[0]
-        
+        stem = os.path.splitext(filename)[0]
+        match = re.search(r"(\d{8})$", stem)
+        date_str = match.group(1) if match else stem
+
         if start_date and date_str < start_date:
             continue
         if end_date and date_str > end_date:
@@ -223,15 +226,16 @@ def parse_payouts(input_dir, output_csv_path, start_date=None, end_date=None):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="払戻金HTMLから追加情報(グレード,日数等)を含めて解析します。")
-    parser.add_argument("--input-dir", type=str, default="../data/raw_html", help="入力HTMLフォルダのパス")
-    parser.add_argument("--output", type=str, default="../data/all_payout_results.csv", help="出力CSVファイルのパス")
+    parser.add_argument("--in-dir", type=str, default="data/html/payouts", help="入力HTMLフォルダのパス")
+    parser.add_argument("--out-csv", type=str, default="data/processed/payouts/all_payout_results.csv", help="出力CSVファイルのパス")
     parser.add_argument("--start-date", type=str, default=None, help="解析開始日付 (YYYYMMDD)")
     parser.add_argument("--end-date", type=str, default=None, help="解析終了日付 (YYYYMMDD)")
     
     args = parser.parse_args()
     
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    input_dir = os.path.join(script_dir, args.input_dir) if not os.path.isabs(args.input_dir) else args.input_dir
-    output_path = os.path.join(script_dir, args.output) if not os.path.isabs(args.output) else args.output
+    project_root = os.path.dirname(script_dir)
+    input_dir = os.path.join(project_root, args.in_dir) if not os.path.isabs(args.in_dir) else args.in_dir
+    output_path = os.path.join(project_root, args.out_csv) if not os.path.isabs(args.out_csv) else args.out_csv
     
     parse_payouts(input_dir, output_path, args.start_date, args.end_date)
