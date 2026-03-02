@@ -44,7 +44,11 @@ def parse_payouts(input_dir, output_csv_path, start_date=None, end_date=None):
         filename = os.path.basename(html_file_path)
         stem = os.path.splitext(filename)[0]
         match = re.search(r"(\d{8})$", stem)
-        date_str = match.group(1) if match else stem
+        if not match:
+            print(f"Warning: Skipping file without YYYYMMDD suffix: {filename}")
+            continue
+
+        date_str = match.group(1)
 
         if start_date and date_str < start_date:
             continue
