@@ -163,14 +163,7 @@ def parse_payouts(input_dir, output_csv_path, start_date=None, end_date=None):
                                 return ""
                             clean_val = str(val).replace("¥", "").replace("\\", "").replace("￥", "").replace("円", "").replace(",", "").strip()
                             if clean_val.isdigit():
-                                num_val = int(clean_val)
-                                if col_name == "払戻金" and num_val > 500000:
-                                    special_strings_report.append({
-                                        "Date": date_str, "Place": v_info["place"], "Race": race_num,
-                                        "Column": col_name, "Value": f"異常値除外({val})"
-                                    })
-                                    return math.nan
-                                return num_val
+                                return int(clean_val)
                             else:
                                 special_strings_report.append({
                                     "Date": date_str, "Place": v_info["place"], "Race": race_num,
