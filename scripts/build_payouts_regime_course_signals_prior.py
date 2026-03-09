@@ -3,6 +3,7 @@ import csv
 import math
 import os
 from collections import defaultdict
+from statistics import median
 
 
 def resolve_path(project_root: str, path: str) -> str:
@@ -21,6 +22,18 @@ def parse_lane(value) -> int | None:
         return None
     lane = int(s)
     return lane if 1 <= lane <= 6 else None
+
+
+def parse_numeric(value) -> float | None:
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        return None
 
 
 def main() -> None:
@@ -51,11 +64,13 @@ def main() -> None:
     venue_top2_counts: dict[str, dict[int, int]] = defaultdict(lambda: defaultdict(int))
     venue_top3_counts: dict[str, dict[int, int]] = defaultdict(lambda: defaultdict(int))
     venue_races: dict[str, set[tuple[str, str]]] = defaultdict(set)
+    venue_popularity_values: dict[str, list[float]] = defaultdict(list)
+    venue_log_payout_values: dict[str, list[float]] = defaultdict(list)
     matched_date_rows = 0
 
     with open(in_csv, "r", encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
-        required = {"日付", "場名", "レース番号", "1着", "2着", "3着"}
+        required = {"日付", "場名", "レース番号", "1着", "2着", "3着", "人気", "払戻金"}
         missing = required - set(reader.fieldnames or [])
         if missing:
             raise KeyError(f"missing required columns: {sorted(missing)}")
@@ -75,6 +90,14 @@ def main() -> None:
             race_no = str(row.get("レース番号", "")).strip()
             if not venue or not race_no:
                 continue
+
+            popularity_value = parse_numeric(row.get("人気"))
+            if popularity_value is not None:
+                venue_popularity_values[venue].append(popularity_value)
+
+            payout_value = parse_numeric(row.get("払戻金"))
+            if payout_value is not None:
+                venue_log_payout_values[venue].append(math.log1p(payout_value))
 
             win_lane = parse_lane(row.get("1着"))
             top2_lanes = [parse_lane(row.get("1着")), parse_lane(row.get("2着"))]
@@ -98,6 +121,15 @@ def main() -> None:
         if n_races == 0:
             continue
 
+        popularity_values = venue_popularity_values[venue]
+        log_payout_values = venue_log_payout_values[venue]
+        n_popularity_valid = len(popularity_values)
+        n_payout_valid = len(log_payout_values)
+        if n_popularity_valid == 0:
+            raise ValueError(f"no valid numeric popularity rows for venue={venue}; cannot build popularity prior")
+        if n_payout_valid == 0:
+            raise ValueError(f"no valid numeric payout rows for venue={venue}; cannot build payout prior")
+
         win_total = sum(venue_win_counts[venue][lane] for lane in range(1, 7))
         top2_total = sum(venue_top2_counts[venue][lane] for lane in range(1, 7))
         top3_total = sum(venue_top3_counts[venue][lane] for lane in range(1, 7))
@@ -117,7 +149,14 @@ def main() -> None:
                 f"top3 count mismatch at venue={venue}: top3_total={top3_total}, expected={expected_top3_total}"
             )
 
-        row = {"場名": venue, "n_races": n_races}
+        row = {
+            "場名": venue,
+            "n_races": n_races,
+            "n_popularity_valid": n_popularity_valid,
+            "base_popularity_median": median(popularity_values),
+            "n_payout_valid": n_payout_valid,
+            "base_log_payout_median": median(log_payout_values),
+        }
         win_denom = n_races + 6 * args.alpha
         top2_denom = expected_top2_total + 6 * args.alpha
         top3_denom = expected_top3_total + 6 * args.alpha
@@ -146,6 +185,10 @@ def main() -> None:
     fieldnames = [
         "場名",
         "n_races",
+        "n_popularity_valid",
+        "base_popularity_median",
+        "n_payout_valid",
+        "base_log_payout_median",
         *(f"base_win_{i}" for i in range(1, 7)),
         *(f"base_top2_{i}" for i in range(1, 7)),
         *(f"base_top3_{i}" for i in range(1, 7)),

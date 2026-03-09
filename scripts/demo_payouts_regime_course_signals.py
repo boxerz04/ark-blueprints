@@ -1,6 +1,8 @@
 import argparse
 import csv
+import math
 import os
+from statistics import median
 
 
 def resolve_path(project_root: str, path: str) -> str:
@@ -21,19 +23,37 @@ def parse_lane(value) -> int | None:
     return lane if 1 <= lane <= 6 else None
 
 
+def parse_numeric(value) -> float | None:
+    if value is None:
+        return None
+    s = str(value).strip()
+    if not s:
+        return None
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
 def parse_race_no(race_no: str) -> int:
     s = str(race_no).strip().upper().replace("R", "")
     return int(s)
 
 
-def load_prior(prior_csv: str, venue: str) -> tuple[dict[int, float], dict[int, float], dict[int, float]]:
+def load_prior(
+    prior_csv: str, venue: str
+) -> tuple[dict[int, float], dict[int, float], dict[int, float], float, float]:
     base_win: dict[int, float] = {}
     base_top2: dict[int, float] = {}
     base_top3: dict[int, float] = {}
+    base_popularity_median: float | None = None
+    base_log_payout_median: float | None = None
     with open(prior_csv, "r", encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
         required = {
             "場名",
+            "base_popularity_median",
+            "base_log_payout_median",
             *(f"base_win_{i}" for i in range(1, 7)),
             *(f"base_top2_{i}" for i in range(1, 7)),
             *(f"base_top3_{i}" for i in range(1, 7)),
@@ -49,6 +69,8 @@ def load_prior(prior_csv: str, venue: str) -> tuple[dict[int, float], dict[int, 
                 base_win[lane] = float(row[f"base_win_{lane}"])
                 base_top2[lane] = float(row[f"base_top2_{lane}"])
                 base_top3[lane] = float(row[f"base_top3_{lane}"])
+            base_popularity_median = float(row["base_popularity_median"])
+            base_log_payout_median = float(row["base_log_payout_median"])
             break
 
     for lane in range(1, 7):
@@ -57,6 +79,11 @@ def load_prior(prior_csv: str, venue: str) -> tuple[dict[int, float], dict[int, 
         if base_win[lane] <= 0.0 or base_top2[lane] <= 0.0 or base_top3[lane] <= 0.0:
             raise ValueError(f"prior must be > 0.0 for multiplicative signal at venue={venue}, lane={lane}")
 
+    if base_popularity_median is None or base_popularity_median <= 0:
+        raise ValueError(f"base_popularity_median must be > 0 for venue={venue}")
+    if base_log_payout_median is None:
+        raise ValueError(f"base_log_payout_median is missing for venue={venue}")
+
     if abs(sum(base_win.values()) - 1.0) > 1e-9:
         raise ValueError(f"base_win sum != 1.0 at venue={venue}")
     if abs(sum(base_top2.values()) - 1.0) > 1e-9:
@@ -64,14 +91,14 @@ def load_prior(prior_csv: str, venue: str) -> tuple[dict[int, float], dict[int, 
     if abs(sum(base_top3.values()) - 1.0) > 1e-9:
         raise ValueError(f"base_top3 sum != 1.0 at venue={venue}")
 
-    return base_win, base_top2, base_top3
+    return base_win, base_top2, base_top3, base_popularity_median, base_log_payout_median
 
 
 def load_day_races(payout_csv: str, date: str, venue: str) -> list[dict]:
     races = []
     with open(payout_csv, "r", encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
-        required = {"日付", "場名", "レース番号", "1着", "2着", "3着"}
+        required = {"日付", "場名", "レース番号", "1着", "2着", "3着", "人気", "払戻金"}
         missing = required - set(reader.fieldnames or [])
         if missing:
             raise KeyError(f"payout CSV missing required columns: {sorted(missing)}")
@@ -92,6 +119,7 @@ def load_day_races(payout_csv: str, date: str, venue: str) -> list[dict]:
             if win_lane is None or any(l is None for l in top3_lanes):
                 continue
 
+            payout_value = parse_numeric(row.get("払戻金"))
             races.append(
                 {
                     "日付": date,
@@ -100,6 +128,8 @@ def load_day_races(payout_csv: str, date: str, venue: str) -> list[dict]:
                     "race_no_int": race_no_int,
                     "win_lane": win_lane,
                     "top3_lanes": top3_lanes,
+                    "popularity": parse_numeric(row.get("人気")),
+                    "log_payout": math.log1p(payout_value) if payout_value is not None else None,
                 }
             )
 
@@ -114,11 +144,15 @@ def build_sequential_rows(
     base_win: dict[int, float],
     base_top2: dict[int, float],
     base_top3: dict[int, float],
+    base_popularity_median: float,
+    base_log_payout_median: float,
     prior_strength: float,
 ) -> list[dict]:
     obs_win = {lane: 0 for lane in range(1, 7)}
     obs_top2 = {lane: 0 for lane in range(1, 7)}
     obs_top3 = {lane: 0 for lane in range(1, 7)}
+    obs_popularity_values: list[float] = []
+    obs_log_payout_values: list[float] = []
     rows = []
 
     for i, race in enumerate(races):
@@ -132,24 +166,46 @@ def build_sequential_rows(
         m_top3 = {}
         for lane in range(1, 7):
             post_win[lane] = (prior_strength * base_win[lane] + obs_win[lane]) / (prior_strength + observed_races)
-            post_top2[lane] = (2 * prior_strength * base_top2[lane] + obs_top2[lane]) / (2 * prior_strength + 2 * observed_races)
-            post_top3[lane] = (3 * prior_strength * base_top3[lane] + obs_top3[lane]) / (3 * prior_strength + 3 * observed_races)
+            post_top2[lane] = (2 * prior_strength * base_top2[lane] + obs_top2[lane]) / (
+                2 * prior_strength + 2 * observed_races
+            )
+            post_top3[lane] = (3 * prior_strength * base_top3[lane] + obs_top3[lane]) / (
+                3 * prior_strength + 3 * observed_races
+            )
             m_win[lane] = post_win[lane] / base_win[lane]
             m_top2[lane] = post_top2[lane] / base_top2[lane]
             m_top3[lane] = post_top3[lane] / base_top3[lane]
 
+        pop_valid_obs = len(obs_popularity_values)
+        payout_valid_obs = len(obs_log_payout_values)
+        post_popularity_median = median(obs_popularity_values) if pop_valid_obs > 0 else base_popularity_median
+        post_log_payout_median = median(obs_log_payout_values) if payout_valid_obs > 0 else base_log_payout_median
+
+        regime_popularity_shift = post_popularity_median / base_popularity_median
+        regime_payout_shift = math.exp(post_log_payout_median - base_log_payout_median)
+
         strength_win = sum(abs(post_win[lane] - base_win[lane]) for lane in range(1, 7))
         strength_top2 = sum(abs(post_top2[lane] - base_top2[lane]) for lane in range(1, 7))
         strength_top3 = sum(abs(post_top3[lane] - base_top3[lane]) for lane in range(1, 7))
+        strength_market = abs(math.log(regime_popularity_shift)) + abs(math.log(regime_payout_shift))
 
         row = {
             "日付": date,
             "場名": venue,
             "レース番号": race["レース番号"],
             "observed_races": observed_races,
+            "base_popularity_median": base_popularity_median,
+            "post_popularity_median": post_popularity_median,
+            "pop_valid_obs": pop_valid_obs,
+            "base_log_payout_median": base_log_payout_median,
+            "post_log_payout_median": post_log_payout_median,
+            "payout_valid_obs": payout_valid_obs,
+            "regime_popularity_shift": regime_popularity_shift,
+            "regime_payout_shift": regime_payout_shift,
             "strength_win": strength_win,
             "strength_top2": strength_top2,
             "strength_top3": strength_top3,
+            "strength_market": strength_market,
         }
         for lane in range(1, 7):
             row[f"m_win_{lane}"] = m_win[lane]
@@ -171,6 +227,10 @@ def build_sequential_rows(
             obs_top2[lane] += 1
         for lane in race["top3_lanes"]:
             obs_top3[lane] += 1
+        if race["popularity"] is not None:
+            obs_popularity_values.append(race["popularity"])
+        if race["log_payout"] is not None:
+            obs_log_payout_values.append(race["log_payout"])
 
     return rows
 
@@ -188,9 +248,12 @@ def print_rows(rows: list[dict]) -> None:
         *(f"m_win_{i}" for i in range(1, 7)),
         *(f"m_top2_{i}" for i in range(1, 7)),
         *(f"m_top3_{i}" for i in range(1, 7)),
+        "regime_popularity_shift",
+        "regime_payout_shift",
         "strength_win",
         "strength_top2",
         "strength_top3",
+        "strength_market",
     ]
     print(",".join(header))
     for row in rows:
@@ -202,9 +265,12 @@ def print_rows(rows: list[dict]) -> None:
             *(f"{row[f'm_win_{i}']:.6f}" for i in range(1, 7)),
             *(f"{row[f'm_top2_{i}']:.6f}" for i in range(1, 7)),
             *(f"{row[f'm_top3_{i}']:.6f}" for i in range(1, 7)),
+            f"{row['regime_popularity_shift']:.6f}",
+            f"{row['regime_payout_shift']:.6f}",
             f"{row['strength_win']:.6f}",
             f"{row['strength_top2']:.6f}",
             f"{row['strength_top3']:.6f}",
+            f"{row['strength_market']:.6f}",
         ]
         print(",".join(values))
 
@@ -221,9 +287,18 @@ def write_rows_csv(out_csv: str, rows: list[dict]) -> None:
         *(f"m_win_{i}" for i in range(1, 7)),
         *(f"m_top2_{i}" for i in range(1, 7)),
         *(f"m_top3_{i}" for i in range(1, 7)),
+        "regime_popularity_shift",
+        "regime_payout_shift",
         "strength_win",
         "strength_top2",
         "strength_top3",
+        "strength_market",
+        "base_popularity_median",
+        "post_popularity_median",
+        "pop_valid_obs",
+        "base_log_payout_median",
+        "post_log_payout_median",
+        "payout_valid_obs",
         *(f"base_win_{i}" for i in range(1, 7)),
         *(f"base_top2_{i}" for i in range(1, 7)),
         *(f"base_top3_{i}" for i in range(1, 7)),
@@ -268,13 +343,29 @@ def main() -> None:
     if args.prior_strength <= 0:
         raise ValueError("prior-strength must be > 0")
 
-    base_win, base_top2, base_top3 = load_prior(prior_csv, args.venue)
+    (
+        base_win,
+        base_top2,
+        base_top3,
+        base_popularity_median,
+        base_log_payout_median,
+    ) = load_prior(prior_csv, args.venue)
     races = load_day_races(payout_csv, args.date, args.venue)
     if not races:
         print(f"[WARN] no races found for date={args.date}, venue={args.venue}")
         return
 
-    rows = build_sequential_rows(args.date, args.venue, races, base_win, base_top2, base_top3, args.prior_strength)
+    rows = build_sequential_rows(
+        args.date,
+        args.venue,
+        races,
+        base_win,
+        base_top2,
+        base_top3,
+        base_popularity_median,
+        base_log_payout_median,
+        args.prior_strength,
+    )
     print_rows(rows)
 
     if out_csv:
