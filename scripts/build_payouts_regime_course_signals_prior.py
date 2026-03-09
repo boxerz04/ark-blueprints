@@ -48,6 +48,7 @@ def main() -> None:
         raise FileNotFoundError(f"input CSV not found: {in_csv}")
 
     venue_win_counts: dict[str, dict[int, int]] = defaultdict(lambda: defaultdict(int))
+    venue_top2_counts: dict[str, dict[int, int]] = defaultdict(lambda: defaultdict(int))
     venue_top3_counts: dict[str, dict[int, int]] = defaultdict(lambda: defaultdict(int))
     venue_races: dict[str, set[tuple[str, str]]] = defaultdict(set)
     matched_date_rows = 0
@@ -76,12 +77,15 @@ def main() -> None:
                 continue
 
             win_lane = parse_lane(row.get("1着"))
+            top2_lanes = [parse_lane(row.get("1着")), parse_lane(row.get("2着"))]
             top3_lanes = [parse_lane(row.get("1着")), parse_lane(row.get("2着")), parse_lane(row.get("3着"))]
-            if win_lane is None or any(l is None for l in top3_lanes):
+            if win_lane is None or any(l is None for l in top2_lanes) or any(l is None for l in top3_lanes):
                 continue
 
             venue_races[venue].add((date, race_no))
             venue_win_counts[venue][win_lane] += 1
+            for lane in top2_lanes:
+                venue_top2_counts[venue][lane] += 1
             for lane in top3_lanes:
                 venue_top3_counts[venue][lane] += 1
 
@@ -95,11 +99,17 @@ def main() -> None:
             continue
 
         win_total = sum(venue_win_counts[venue][lane] for lane in range(1, 7))
+        top2_total = sum(venue_top2_counts[venue][lane] for lane in range(1, 7))
         top3_total = sum(venue_top3_counts[venue][lane] for lane in range(1, 7))
 
         if win_total != n_races:
             raise ValueError(
                 f"win count mismatch at venue={venue}: win_total={win_total}, expected={n_races}"
+            )
+        expected_top2_total = 2 * n_races
+        if top2_total != expected_top2_total:
+            raise ValueError(
+                f"top2 count mismatch at venue={venue}: top2_total={top2_total}, expected={expected_top2_total}"
             )
         expected_top3_total = 3 * n_races
         if top3_total != expected_top3_total:
@@ -109,15 +119,20 @@ def main() -> None:
 
         row = {"場名": venue, "n_races": n_races}
         win_denom = n_races + 6 * args.alpha
+        top2_denom = expected_top2_total + 6 * args.alpha
         top3_denom = expected_top3_total + 6 * args.alpha
         for lane in range(1, 7):
             row[f"base_win_{lane}"] = (venue_win_counts[venue][lane] + args.alpha) / win_denom
+            row[f"base_top2_{lane}"] = (venue_top2_counts[venue][lane] + args.alpha) / top2_denom
             row[f"base_top3_{lane}"] = (venue_top3_counts[venue][lane] + args.alpha) / top3_denom
 
         win_sum = sum(row[f"base_win_{lane}"] for lane in range(1, 7))
+        top2_sum = sum(row[f"base_top2_{lane}"] for lane in range(1, 7))
         top3_sum = sum(row[f"base_top3_{lane}"] for lane in range(1, 7))
         if not math.isclose(win_sum, 1.0, abs_tol=1e-9):
             raise ValueError(f"base_win sum mismatch at venue={venue}: {win_sum}")
+        if not math.isclose(top2_sum, 1.0, abs_tol=1e-9):
+            raise ValueError(f"base_top2 sum mismatch at venue={venue}: {top2_sum}")
         if not math.isclose(top3_sum, 1.0, abs_tol=1e-9):
             raise ValueError(f"base_top3 sum mismatch at venue={venue}: {top3_sum}")
 
@@ -128,7 +143,13 @@ def main() -> None:
 
     os.makedirs(os.path.dirname(out_csv), exist_ok=True)
 
-    fieldnames = ["場名", "n_races", *(f"base_win_{i}" for i in range(1, 7)), *(f"base_top3_{i}" for i in range(1, 7))]
+    fieldnames = [
+        "場名",
+        "n_races",
+        *(f"base_win_{i}" for i in range(1, 7)),
+        *(f"base_top2_{i}" for i in range(1, 7)),
+        *(f"base_top3_{i}" for i in range(1, 7)),
+    ]
     with open(out_csv, "w", encoding="utf-8-sig", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
