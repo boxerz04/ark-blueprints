@@ -26,6 +26,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Build venue-wise top3 lane share prior from payouts CSV.")
     parser.add_argument("--in-csv", default="data/processed/payouts/all_payout_results.csv", help="Input payouts CSV path")
     parser.add_argument("--out-csv", default="data/priors/payouts_regime/latest.csv", help="Output prior CSV path")
+    parser.add_argument("--start-date", default=None, help="Start date filter (YYYYMMDD, inclusive)")
+    parser.add_argument("--end-date", default=None, help="End date filter (YYYYMMDD, inclusive)")
     args = parser.parse_args()
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -38,6 +40,7 @@ def main() -> None:
 
     venue_lane_counts: dict[str, dict[int, int]] = defaultdict(lambda: defaultdict(int))
     venue_races: dict[str, set[tuple[str, str]]] = defaultdict(set)
+    matched_date_rows = 0
 
     with open(in_csv, "r", encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
@@ -48,6 +51,15 @@ def main() -> None:
 
         for row in reader:
             date = str(row.get("日付", "")).strip()
+            if not date:
+                continue
+            if args.start_date and date < args.start_date:
+                continue
+            if args.end_date and date > args.end_date:
+                continue
+
+            matched_date_rows += 1
+
             venue = str(row.get("場名", "")).strip()
             race_no = str(row.get("レース番号", "")).strip()
             if not date or not venue or not race_no:
@@ -60,6 +72,9 @@ def main() -> None:
             venue_races[venue].add((date, race_no))
             for lane in lanes:
                 venue_lane_counts[venue][lane] += 1
+
+    if matched_date_rows == 0:
+        raise ValueError("no rows matched date filter")
 
     os.makedirs(os.path.dirname(out_csv), exist_ok=True)
 
