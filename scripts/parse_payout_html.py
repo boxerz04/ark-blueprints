@@ -6,6 +6,55 @@ import glob
 import math
 import re
 
+PLACE_CODE_MAP = {
+    "桐生": 1,
+    "戸田": 2,
+    "江戸川": 3,
+    "平和島": 4,
+    "多摩川": 5,
+    "浜名湖": 6,
+    "蒲郡": 7,
+    "常滑": 8,
+    "津": 9,
+    "三国": 10,
+    "びわこ": 11,
+    "住之江": 12,
+    "尼崎": 13,
+    "鳴門": 14,
+    "丸亀": 15,
+    "児島": 16,
+    "宮島": 17,
+    "徳山": 18,
+    "下関": 19,
+    "若松": 20,
+    "芦屋": 21,
+    "福岡": 22,
+    "唐津": 23,
+    "大村": 24,
+}
+
+
+def get_place_code(place_name):
+    if place_name not in PLACE_CODE_MAP:
+        raise ValueError(f"Unknown venue name for code mapping: '{place_name}'")
+    return PLACE_CODE_MAP[place_name]
+
+
+def parse_r_value(race_label_or_num):
+    race_text = str(race_label_or_num).strip()
+    match = re.search(r"(\d+)", race_text)
+    if not match:
+        raise ValueError(f"Could not parse race number from: '{race_label_or_num}'")
+    return int(match.group(1))
+
+
+def is_valid_result_value(val):
+    return isinstance(val, int) and 1 <= val <= 6
+
+
+def is_valid_result_row(rank1, rank2, rank3):
+    return all(is_valid_result_value(v) for v in (rank1, rank2, rank3))
+
 def get_series_info(table_header):
     # table_header は <thead> の <tr> または <th> を想定
     series_name = ""
@@ -176,15 +225,23 @@ def parse_payouts(input_dir, output_csv_path, start_date=None, end_date=None):
                         r3_val = check_and_convert("3着", rank3)
                         payout_val = check_and_convert("払戻金", payout_text)
                         pop_val = check_and_convert("人気", pop_text)
+                        code = get_place_code(v_info["place"])
+                        r_value = parse_r_value(race_num)
+                        race_id = f"{date_str}{code:02d}{r_value:02d}"
+                        valid_row = is_valid_result_row(r1_val, r2_val, r3_val)
                         
                         all_results.append({
                             "日付": date_str,
                             "場名": v_info["place"],
+                            "code": code,
                             "グレード": v_info["grade"],
                             "開催タイプ": v_info["type"],
                             "日数": v_info["day"],
                             "シリーズ名": v_info["series"],
                             "レース番号": race_num,
+                            "R": r_value,
+                            "race_id": race_id,
+                            "is_valid_result_row": valid_row,
                             "1着": r1_val,
                             "2着": r2_val,
                             "3着": r3_val,
@@ -202,7 +259,10 @@ def parse_payouts(input_dir, output_csv_path, start_date=None, end_date=None):
     os.makedirs(os.path.dirname(output_csv_path), exist_ok=True)
     
     with open(output_csv_path, "w", encoding="utf-8-sig", newline="") as f:
-        fieldnames = ["日付", "場名", "グレード", "開催タイプ", "日数", "シリーズ名", "レース番号", "1着", "2着", "3着", "払戻金", "人気"]
+        fieldnames = [
+            "日付", "場名", "code", "グレード", "開催タイプ", "日数", "シリーズ名", "レース番号", "R",
+            "race_id", "is_valid_result_row", "1着", "2着", "3着", "払戻金", "人気"
+        ]
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         
         writer.writeheader()
