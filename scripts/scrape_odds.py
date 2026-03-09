@@ -10,6 +10,12 @@ import asyncio
 import aiohttp
 from bs4 import BeautifulSoup
 
+
+def ensure_parent_dir(path: str) -> None:
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
 headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36"
 }
@@ -32,7 +38,7 @@ async def fetch_and_save(session, url, save_path, title_keywords=("準優勝戦"
         title_text = title_elem.get_text(strip=True) if title_elem else ""
 
         if any(k in title_text for k in title_keywords):
-            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            ensure_parent_dir(save_path)
             with open(save_path, "wb") as f:
                 f.write(content)
             print(f"[SAVED] {save_path} ({title_text})")

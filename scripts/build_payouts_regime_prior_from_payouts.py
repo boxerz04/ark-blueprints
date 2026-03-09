@@ -4,6 +4,11 @@ import os
 from collections import defaultdict
 
 
+def ensure_parent_dir(path: str) -> None:
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
 def resolve_path(project_root: str, path: str) -> str:
     return path if os.path.isabs(path) else os.path.join(project_root, path)
 
@@ -76,7 +81,7 @@ def main() -> None:
     if matched_date_rows == 0:
         raise ValueError("no rows matched date filter")
 
-    os.makedirs(os.path.dirname(out_csv), exist_ok=True)
+    ensure_parent_dir(out_csv)
 
     rows = []
     for venue in sorted(venue_lane_counts.keys()):

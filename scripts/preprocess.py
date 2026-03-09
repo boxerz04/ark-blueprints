@@ -577,7 +577,9 @@ def main():
 
     # --- save & reports
     try:
-        out_path.parent.mkdir(parents=True, exist_ok=True)
+        parent = out_path.parent
+        if str(parent) not in ("", "."):
+            parent.mkdir(parents=True, exist_ok=True)
         df.to_csv(out_path, index=False, encoding="utf-8-sig")
         print(f"[OK] wrote master.csv : {out_path}  {df.shape}")
         write_run_log(reports_dir, out_path, start_dt, end_dt, df)

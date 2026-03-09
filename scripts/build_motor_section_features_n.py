@@ -252,7 +252,11 @@ def main() -> int:
 
     out = df[out_cols].copy()
 
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+    parent = out_path.parent
+
+    if str(parent) not in ("", "."):
+
+        parent.mkdir(parents=True, exist_ok=True)
     out.to_csv(out_path, index=False, encoding="utf-8-sig")
 
     print(f"[OK] wrote: {out_path}")

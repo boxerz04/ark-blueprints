@@ -37,7 +37,9 @@ def main():
 
     for r in tqdm(rows, desc="Exporting"):
         out_path = dest / Path(r["rel_path"])
-        out_path.parent.mkdir(parents=True, exist_ok=True)
+        parent = out_path.parent
+        if str(parent) not in ("", "."):
+            parent.mkdir(parents=True, exist_ok=True)
         data = r["bytes"]
         if r["is_gzip"]:
             data = gzip.decompress(data)

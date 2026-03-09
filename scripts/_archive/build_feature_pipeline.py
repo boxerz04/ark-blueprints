@@ -117,8 +117,9 @@ def main():
     args = parse_args()
     processed_dir = Path(args.processed_dir)
     out_path = Path(args.out)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-
+    parent = out_path.parent
+    if str(parent) not in ("", "."):
+        parent.mkdir(parents=True, exist_ok=True)
     master_csv = processed_dir / "master.csv"
     if not master_csv.exists():
         raise FileNotFoundError(f"master.csv not found: {master_csv}")

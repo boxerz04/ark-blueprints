@@ -416,7 +416,9 @@ def main() -> None:
 
     if args.out_csv:
         out_path = Path(args.out_csv)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
+        parent = out_path.parent
+        if str(parent) not in ("", "."):
+            parent.mkdir(parents=True, exist_ok=True)
         df_out = df.sort_values(["importance_gain", "importance_split"], ascending=False).reset_index(drop=True)
         df_out.to_csv(out_path, index=False, encoding="utf-8-sig")
         print(f"\n[OK] wrote CSV: {out_path} (rows={len(df_out)})")

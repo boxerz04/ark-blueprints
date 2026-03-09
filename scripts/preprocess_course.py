@@ -384,7 +384,9 @@ def main():
         raise
 
     # ---- 保存
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+    parent = out_path.parent
+    if str(parent) not in ("", "."):
+        parent.mkdir(parents=True, exist_ok=True)
     merged.to_csv(out_path, index=False, encoding="utf-8-sig")
     print(f"[OK] wrote course csv : {out_path}  {merged.shape}")
 

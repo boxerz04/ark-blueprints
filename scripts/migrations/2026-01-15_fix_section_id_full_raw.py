@@ -175,8 +175,9 @@ def process_one_file(fp: Path, out_dir: Optional[Path], dry_run: bool) -> FileSt
 
 
 def write_state_json(state_path: Path, args: argparse.Namespace, stats: List[FileStat]) -> None:
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-
+    parent = state_path.parent
+    if str(parent) not in ("", "."):
+        parent.mkdir(parents=True, exist_ok=True)
     ok = [s for s in stats if s.status in ("ok", "dry_run")]
     skipped = [s for s in stats if s.status.startswith("skip")]
     errors = [s for s in stats if s.status.startswith("error")]

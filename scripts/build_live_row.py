@@ -28,6 +28,12 @@ from typing import Optional, List, Tuple
 
 import numpy as np
 import pandas as pd
+
+
+def ensure_parent_dir(path: str) -> None:
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
 from bs4 import BeautifulSoup
 from io import StringIO
 import requests  # robust read_html のフォールバックで使用
@@ -73,7 +79,7 @@ URLS = {
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; ark-live/1.4)"}
 
 def ensure_dir(path: str) -> None:
-    Path(os.path.dirname(path)).mkdir(parents=True, exist_ok=True)
+    ensure_parent_dir(path)
 
 def normalize_yyyymmdd(s: str) -> str:
     s = s.replace("-", "").strip()

@@ -241,7 +241,9 @@ def main():
     }
 
     out_path = Path(args.out) if args.out else PR / "models" / args.approach / "hpo_results.json"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+    parent = out_path.parent
+    if str(parent) not in ("", "."):
+        parent.mkdir(parents=True, exist_ok=True)
     report = {
         "approach": args.approach,
         "n_iter": args.n_iter,
