@@ -1,5 +1,6 @@
 import argparse
 import csv
+import math
 import os
 from collections import defaultdict
 
@@ -32,7 +33,11 @@ def main() -> None:
     )
     parser.add_argument("--start-date", default=None, help="Start date filter (YYYYMMDD, inclusive)")
     parser.add_argument("--end-date", default=None, help="End date filter (YYYYMMDD, inclusive)")
+    parser.add_argument("--alpha", type=float, default=0.5, help="Additive smoothing strength (>=0)")
     args = parser.parse_args()
+
+    if args.alpha < 0:
+        raise ValueError(f"alpha must be >= 0: {args.alpha}")
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(script_dir)
@@ -103,15 +108,17 @@ def main() -> None:
             )
 
         row = {"場名": venue, "n_races": n_races}
+        win_denom = n_races + 6 * args.alpha
+        top3_denom = expected_top3_total + 6 * args.alpha
         for lane in range(1, 7):
-            row[f"base_win_{lane}"] = venue_win_counts[venue][lane] / n_races
-            row[f"base_top3_{lane}"] = venue_top3_counts[venue][lane] / expected_top3_total
+            row[f"base_win_{lane}"] = (venue_win_counts[venue][lane] + args.alpha) / win_denom
+            row[f"base_top3_{lane}"] = (venue_top3_counts[venue][lane] + args.alpha) / top3_denom
 
         win_sum = sum(row[f"base_win_{lane}"] for lane in range(1, 7))
         top3_sum = sum(row[f"base_top3_{lane}"] for lane in range(1, 7))
-        if not abs(win_sum - 1.0) <= 1e-9:
+        if not math.isclose(win_sum, 1.0, abs_tol=1e-9):
             raise ValueError(f"base_win sum mismatch at venue={venue}: {win_sum}")
-        if not abs(top3_sum - 1.0) <= 1e-9:
+        if not math.isclose(top3_sum, 1.0, abs_tol=1e-9):
             raise ValueError(f"base_top3 sum mismatch at venue={venue}: {top3_sum}")
 
         rows.append(row)
