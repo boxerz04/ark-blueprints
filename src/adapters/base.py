@@ -65,7 +65,9 @@ def _dump_csv(df: pd.DataFrame, tag: str):
         out = base.with_name(f"{base.stem}__{tag}{base.suffix}")
     else:
         out = base
-    out.parent.mkdir(parents=True, exist_ok=True)
+    parent = out.parent
+    if str(parent) not in ("", "."):
+        parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(out, index=False, encoding="utf-8-sig")
     print(f"[DBG] dumped adapter df -> {out}")
 

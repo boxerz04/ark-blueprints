@@ -6,6 +6,11 @@ import glob
 import math
 import re
 
+def ensure_parent_dir(path: str) -> None:
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
 PLACE_CODE_MAP = {
     "桐生": 1,
     "戸田": 2,
@@ -256,7 +261,7 @@ def parse_payouts(input_dir, output_csv_path, start_date=None, end_date=None):
         if isinstance(row["レース番号"], int):
             row["レース番号"] = f"{row['レース番号']}R"
 
-    os.makedirs(os.path.dirname(output_csv_path), exist_ok=True)
+    ensure_parent_dir(output_csv_path)
     
     with open(output_csv_path, "w", encoding="utf-8-sig", newline="") as f:
         fieldnames = [

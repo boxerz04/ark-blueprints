@@ -93,8 +93,9 @@ def parse_args():
 def main():
     args = parse_args()
     out_path = Path(args.out)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-
+    parent = out_path.parent
+    if str(parent) not in ("", "."):
+        parent.mkdir(parents=True, exist_ok=True)
     # 1) raw 読み込み → 型正規化
     print(f"[INFO] load_raw: {args.raw_dir}")
     df_raw = load_raw(Path(args.raw_dir))

@@ -10,6 +10,12 @@ import os
 import sys
 import logging
 
+
+def ensure_parent_dir(path: str) -> None:
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
 # -----------------------------
 # パス系ユーティリティ
 # -----------------------------
@@ -21,7 +27,7 @@ def project_root() -> str:
 # ロガー
 # -----------------------------
 def setup_logger(log_file: str) -> logging.Logger:
-    os.makedirs(os.path.dirname(log_file), exist_ok=True)
+    ensure_parent_dir(log_file)
     logger = logging.getLogger("run_odds_scheduler")
     logger.setLevel(logging.INFO)
     # 既存ハンドラがあればクリア（タスクスケジューラの多重起動対策）

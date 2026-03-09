@@ -212,7 +212,9 @@ def main() -> int:
         agg[c] = pd.to_datetime(agg[c]).dt.strftime("%Y-%m-%d")
 
     # ---- output
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+    parent = out_path.parent
+    if str(parent) not in ("", "."):
+        parent.mkdir(parents=True, exist_ok=True)
     agg.to_csv(out_path, index=False, encoding="utf-8-sig")
 
     print(f"[OK] wrote: {out_path}")

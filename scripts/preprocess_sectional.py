@@ -249,7 +249,9 @@ def attach_sectional_from_html(master: pd.DataFrame, live_html_root: Path) -> pd
     # デバッグ保存
     try:
         dbg = Path("data") / "live" / "debug_sectional_join.csv"
-        dbg.parent.mkdir(parents=True, exist_ok=True)
+        parent = dbg.parent
+        if str(parent) not in ("", "."):
+            parent.mkdir(parents=True, exist_ok=True)
         joined.to_csv(dbg, index=False, encoding="utf-8-sig")
         print(f"[DEBUG] sectional join result saved: {dbg}")
     except Exception:
@@ -288,7 +290,11 @@ def main():
         _ensure_sectional_presence(merged)  # 必須10列は最低限存在させる
         _ensure_numeric_neutral(merged)     # 数値統一
 
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+    parent = out_path.parent
+
+    if str(parent) not in ("", "."):
+
+        parent.mkdir(parents=True, exist_ok=True)
     merged.to_csv(out_path, index=False, encoding="utf-8-sig")
     print(f"[OK] wrote: {out_path} rows={merged.shape[0]} cols={merged.shape[1]}")
 

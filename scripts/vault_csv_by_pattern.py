@@ -70,7 +70,9 @@ def set_pragmas(con: sqlite3.Connection, pairs: Iterable[Tuple[str, str]]) -> No
 
 def init_db(db_path: Path) -> sqlite3.Connection:
     new_db = not db_path.exists()
-    db_path.parent.mkdir(parents=True, exist_ok=True)
+    parent = db_path.parent
+    if str(parent) not in ("", "."):
+        parent.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(str(db_path))
     con.execute("PRAGMA foreign_keys=ON;")
     if new_db:

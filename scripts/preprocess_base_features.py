@@ -154,7 +154,9 @@ def load_yaml(path: Path) -> Dict[str, Any]:
 
 def dump_yaml(obj: Dict[str, Any], path: Path) -> None:
     y = _try_yaml()
-    path.parent.mkdir(parents=True, exist_ok=True)
+    parent = path.parent
+    if str(parent) not in ("", "."):
+        parent.mkdir(parents=True, exist_ok=True)
     if y is not None:
         with path.open("w", encoding="utf-8") as f:
             y.safe_dump(obj, f, allow_unicode=True, sort_keys=False)

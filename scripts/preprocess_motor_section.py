@@ -218,7 +218,9 @@ def main() -> None:
             rep_rows.append((f"na_rate__{k}", v))
 
         rep = pd.DataFrame(rep_rows, columns=["metric", "value"])
-        report_path.parent.mkdir(parents=True, exist_ok=True)
+        parent = report_path.parent
+        if str(parent) not in ("", "."):
+            parent.mkdir(parents=True, exist_ok=True)
         rep.to_csv(report_path, index=False, encoding=args.encoding)
         _info(f"qc_report_csv written: {report_path}")
 
@@ -226,7 +228,9 @@ def main() -> None:
     merged = merged.drop(columns=["_merge"])
 
     # --- Write ---
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+    parent = out_path.parent
+    if str(parent) not in ("", "."):
+        parent.mkdir(parents=True, exist_ok=True)
     merged.to_csv(out_path, index=False, encoding=args.encoding)
     _info("DONE")
 

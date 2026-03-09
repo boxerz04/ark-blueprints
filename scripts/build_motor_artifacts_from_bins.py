@@ -48,6 +48,12 @@ from bs4 import BeautifulSoup
 from tqdm import tqdm
 
 
+def ensure_parent_dir(path: str) -> None:
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
+
 # ----------------------------
 # ファイル名から date/code 抽出
 # ----------------------------
@@ -407,8 +413,8 @@ def main():
 
     motor_map = build_motor_id_map(snapshot, gap_days=args.gap_days, use_transition=use_transition)
 
-    os.makedirs(os.path.dirname(args.out_snapshot_csv), exist_ok=True)
-    os.makedirs(os.path.dirname(args.out_map_csv), exist_ok=True)
+    ensure_parent_dir(args.out_snapshot_csv)
+    ensure_parent_dir(args.out_map_csv)
 
     snapshot.to_csv(args.out_snapshot_csv, index=False, encoding="utf_8_sig")
     motor_map.to_csv(args.out_map_csv, index=False, encoding="utf_8_sig")

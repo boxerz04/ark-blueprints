@@ -5,6 +5,11 @@ import os
 from statistics import median
 
 
+def ensure_parent_dir(path: str) -> None:
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
 def resolve_path(project_root: str, path: str) -> str:
     return path if os.path.isabs(path) else os.path.join(project_root, path)
 
@@ -278,7 +283,7 @@ def print_rows(rows: list[dict]) -> None:
 def write_rows_csv(out_csv: str, rows: list[dict]) -> None:
     if not rows:
         return
-    os.makedirs(os.path.dirname(out_csv), exist_ok=True)
+    ensure_parent_dir(out_csv)
     fieldnames = [
         "日付",
         "場名",

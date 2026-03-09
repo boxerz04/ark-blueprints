@@ -87,8 +87,9 @@ SCRIPTS = {
 
 # ====== ユーティリティ ======
 def ensure_parent_dir(path: str):
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-
+    parent = Path(path).parent
+    if str(parent) not in ("", "."):
+        parent.mkdir(parents=True, exist_ok=True)
 def load_settings() -> dict:
     if os.path.exists(SETTINGS_FILE):
         try:

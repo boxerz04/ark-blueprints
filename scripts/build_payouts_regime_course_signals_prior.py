@@ -6,6 +6,11 @@ from collections import defaultdict
 from statistics import median
 
 
+def ensure_parent_dir(path: str) -> None:
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
 def resolve_path(project_root: str, path: str) -> str:
     return path if os.path.isabs(path) else os.path.join(project_root, path)
 
@@ -180,7 +185,7 @@ def main() -> None:
     if not rows:
         raise ValueError("no valid venue rows produced from input data")
 
-    os.makedirs(os.path.dirname(out_csv), exist_ok=True)
+    ensure_parent_dir(out_csv)
 
     fieldnames = [
         "場名",
