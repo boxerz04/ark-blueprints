@@ -23,6 +23,12 @@ def parse_lane(value) -> int | None:
     lane = int(s)
     return lane if 1 <= lane <= 6 else None
 
+def ensure_parent_dir(path: str) -> None:
+    parent = os.path.dirname(path)
+    if parent and parent != ".":
+        os.makedirs(parent, exist_ok=True)
+
+
 
 def parse_numeric(value) -> float | None:
     if value is None:
@@ -180,7 +186,7 @@ def main() -> None:
     if not rows:
         raise ValueError("no valid venue rows produced from input data")
 
-    os.makedirs(os.path.dirname(out_csv), exist_ok=True)
+    ensure_parent_dir(out_csv)
 
     fieldnames = [
         "場名",
