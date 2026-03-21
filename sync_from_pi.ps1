@@ -1,4 +1,4 @@
-@'
+﻿@'
 param(
     [string]$PiRoot = "\\192.168.10.125\arkdata",
     [string]$LocalRoot = "C:\Users\user\Desktop\Git\ark-blueprints\data_pi_sync",
