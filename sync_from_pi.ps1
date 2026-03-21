@@ -24,7 +24,7 @@ function Invoke-RobocopyChecked {
         [string]$Source,
         [string]$Destination,
         [string[]]$FileFilter = @("*"),
-        [switch]$Recursive
+        [bool]$Recursive = $false
     )
 
     if (-not (Test-Path $Source)) {
@@ -33,11 +33,9 @@ function Invoke-RobocopyChecked {
 
     New-Item -ItemType Directory -Force -Path $Destination | Out-Null
 
-    $args = @(
-        $Source
-        $Destination
-    )
-
+    $args = @()
+    $args += $Source
+    $args += $Destination
     $args += $FileFilter
 
     if ($Recursive) {
@@ -45,17 +43,17 @@ function Invoke-RobocopyChecked {
     }
 
     $args += @(
-        "/Z"        # 再開可能コピー
-        "/FFT"      # Samba/Unix との時刻差にやや寛容
-        "/R:2"      # リトライ回数
-        "/W:5"      # 待機秒
-        "/COPY:DAT" # Data/Attributes/Timestamps
-        "/DCOPY:DAT"
-        "/XJ"       # Junction除外
-        "/NP"       # 進捗率を省略
-        "/TEE"
-        "/NJH"
-        "/NJS"
+        "/Z",
+        "/FFT",
+        "/R:2",
+        "/W:5",
+        "/COPY:DAT",
+        "/DCOPY:DAT",
+        "/XJ",
+        "/NP",
+        "/TEE",
+        "/NJH",
+        "/NJS",
         "/LOG+:$LogFile"
     )
 
@@ -63,7 +61,8 @@ function Invoke-RobocopyChecked {
         $args += "/L"
     }
 
-    Write-Log "robocopy start: $Source -> $Destination | filter=$($FileFilter -join ',') | recursive=$Recursive | preview=$Preview"
+    Write-Log ("robocopy start: {0} -> {1} | filter={2} | recursive={3} | preview={4}" -f `
+        $Source, $Destination, ($FileFilter -join ","), $Recursive, $Preview)
 
     & robocopy @args
     $exitCode = $LASTEXITCODE
@@ -81,25 +80,20 @@ try {
     Write-Log "LocalRoot= $LocalRoot"
     Write-Log "Preview  = $Preview"
 
-    # 1) raw 全体
-    Invoke-RobocopyChecked `
-        -Source (Join-Path $PiRoot "raw") `
-        -Destination (Join-Path $LocalRoot "raw") `
-        -FileFilter @("*_raw.csv", "*_refund.csv") `
-        -Recursive
+    Invoke-RobocopyChecked -Source (Join-Path $PiRoot "raw") `
+                           -Destination (Join-Path $LocalRoot "raw") `
+                           -FileFilter @("*_raw.csv", "*_refund.csv") `
+                           -Recursive $true
 
-    # 2) raceinfo 全体
-    Invoke-RobocopyChecked `
-        -Source (Join-Path $PiRoot "processed\raceinfo") `
-        -Destination (Join-Path $LocalRoot "processed\raceinfo") `
-        -FileFilter @("raceinfo_*.csv") `
-        -Recursive
+    Invoke-RobocopyChecked -Source (Join-Path $PiRoot "processed\raceinfo") `
+                           -Destination (Join-Path $LocalRoot "processed\raceinfo") `
+                           -FileFilter @("raceinfo_*.csv") `
+                           -Recursive $true
 
-    # 3) motor 必須2ファイルのみ
-    Invoke-RobocopyChecked `
-        -Source (Join-Path $PiRoot "processed\motor") `
-        -Destination (Join-Path $LocalRoot "processed\motor") `
-        -FileFilter @("motor_id_map__all.csv", "motor_section_features_n__all.csv")
+    Invoke-RobocopyChecked -Source (Join-Path $PiRoot "processed\motor") `
+                           -Destination (Join-Path $LocalRoot "processed\motor") `
+                           -FileFilter @("motor_id_map__all.csv", "motor_section_features_n__all.csv") `
+                           -Recursive $false
 
     Write-Log "=== Sync completed successfully ==="
     Write-Host ""
