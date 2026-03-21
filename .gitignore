@@ -1,6 +1,9 @@
 # data フォルダ以下をすべて無視
 data/
 
+# data_pi_sync フォルダ以下をすべて無視
+/data_pi_sync/
+
 # 実行ログは管理対象外
 /logs/
 
