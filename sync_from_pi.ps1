@@ -24,7 +24,7 @@ function Invoke-RobocopyChecked {
         [string]$Source,
         [string]$Destination,
         [string[]]$FileFilter = @("*"),
-        [bool]$Recursive = $false
+        [switch]$Recursive
     )
 
     if (-not (Test-Path $Source)) {
@@ -33,16 +33,19 @@ function Invoke-RobocopyChecked {
 
     New-Item -ItemType Directory -Force -Path $Destination | Out-Null
 
-    $args = @()
-    $args += $Source
-    $args += $Destination
-    $args += $FileFilter
+    $args = New-Object System.Collections.Generic.List[string]
+    $args.Add($Source)
+    $args.Add($Destination)
 
-    if ($Recursive) {
-        $args += "/E"
+    foreach ($f in $FileFilter) {
+        $args.Add($f)
     }
 
-    $args += @(
+    if ($Recursive) {
+        $args.Add("/E")
+    }
+
+    $common = @(
         "/Z",
         "/FFT",
         "/R:2",
@@ -57,12 +60,15 @@ function Invoke-RobocopyChecked {
         "/LOG+:$LogFile"
     )
 
-    if ($Preview) {
-        $args += "/L"
+    foreach ($c in $common) {
+        $args.Add($c)
     }
 
-    Write-Log ("robocopy start: {0} -> {1} | filter={2} | recursive={3} | preview={4}" -f `
-        $Source, $Destination, ($FileFilter -join ","), $Recursive, $Preview)
+    if ($Preview) {
+        $args.Add("/L")
+    }
+
+    Write-Log ("robocopy start: " + $Source + " -> " + $Destination + " | filter=" + ($FileFilter -join ",") + " | recursive=" + [string]$Recursive.IsPresent + " | preview=" + [string]$Preview.IsPresent)
 
     & robocopy @args
     $exitCode = $LASTEXITCODE
@@ -80,20 +86,17 @@ try {
     Write-Log "LocalRoot= $LocalRoot"
     Write-Log "Preview  = $Preview"
 
-    Invoke-RobocopyChecked -Source (Join-Path $PiRoot "raw") `
-                           -Destination (Join-Path $LocalRoot "raw") `
-                           -FileFilter @("*_raw.csv", "*_refund.csv") `
-                           -Recursive $true
+    $srcRaw = Join-Path $PiRoot "raw"
+    $dstRaw = Join-Path $LocalRoot "raw"
+    Invoke-RobocopyChecked -Source $srcRaw -Destination $dstRaw -FileFilter @("*_raw.csv", "*_refund.csv") -Recursive
 
-    Invoke-RobocopyChecked -Source (Join-Path $PiRoot "processed\raceinfo") `
-                           -Destination (Join-Path $LocalRoot "processed\raceinfo") `
-                           -FileFilter @("raceinfo_*.csv") `
-                           -Recursive $true
+    $srcRaceinfo = Join-Path $PiRoot "processed\raceinfo"
+    $dstRaceinfo = Join-Path $LocalRoot "processed\raceinfo"
+    Invoke-RobocopyChecked -Source $srcRaceinfo -Destination $dstRaceinfo -FileFilter @("raceinfo_*.csv") -Recursive
 
-    Invoke-RobocopyChecked -Source (Join-Path $PiRoot "processed\motor") `
-                           -Destination (Join-Path $LocalRoot "processed\motor") `
-                           -FileFilter @("motor_id_map__all.csv", "motor_section_features_n__all.csv") `
-                           -Recursive $false
+    $srcMotor = Join-Path $PiRoot "processed\motor"
+    $dstMotor = Join-Path $LocalRoot "processed\motor"
+    Invoke-RobocopyChecked -Source $srcMotor -Destination $dstMotor -FileFilter @("motor_id_map__all.csv", "motor_section_features_n__all.csv")
 
     Write-Log "=== Sync completed successfully ==="
     Write-Host ""
@@ -101,7 +104,7 @@ try {
     Write-Host "ログ: $LogFile"
 }
 catch {
-    Write-Log "ERROR: $($_.Exception.Message)"
+    Write-Log ("ERROR: " + $_.Exception.Message)
     Write-Host ""
     Write-Host "同期失敗"
     Write-Host "ログ: $LogFile"
