@@ -1,3 +1,4 @@
+@'
 param(
     [string]$PiRoot = "\\192.168.10.125\arkdata",
     [string]$LocalRoot = "C:\Users\user\Desktop\Git\ark-blueprints\data_pi_sync",
@@ -33,19 +34,14 @@ function Invoke-RobocopyChecked {
 
     New-Item -ItemType Directory -Force -Path $Destination | Out-Null
 
-    $args = New-Object System.Collections.Generic.List[string]
-    $args.Add($Source)
-    $args.Add($Destination)
-
-    foreach ($f in $FileFilter) {
-        $args.Add($f)
-    }
+    $args = @($Source, $Destination)
+    $args += $FileFilter
 
     if ($Recursive) {
-        $args.Add("/E")
+        $args += "/E"
     }
 
-    $common = @(
+    $args += @(
         "/Z",
         "/FFT",
         "/R:2",
@@ -60,15 +56,11 @@ function Invoke-RobocopyChecked {
         "/LOG+:$LogFile"
     )
 
-    foreach ($c in $common) {
-        $args.Add($c)
-    }
-
     if ($Preview) {
-        $args.Add("/L")
+        $args += "/L"
     }
 
-    Write-Log ("robocopy start: " + $Source + " -> " + $Destination + " | filter=" + ($FileFilter -join ",") + " | recursive=" + [string]$Recursive.IsPresent + " | preview=" + [string]$Preview.IsPresent)
+    Write-Log ("robocopy start: " + $Source + " -> " + $Destination + " | filter=" + ($FileFilter -join ",") + " | recursive=" + $Recursive.IsPresent + " | preview=" + $Preview.IsPresent)
 
     & robocopy @args
     $exitCode = $LASTEXITCODE
@@ -110,3 +102,4 @@ catch {
     Write-Host "ログ: $LogFile"
     throw
 }
+'@ | Set-Content -Path .\sync_from_pi.ps1 -Encoding UTF8
