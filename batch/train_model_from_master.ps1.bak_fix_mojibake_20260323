@@ -1,24 +1,24 @@
 ﻿# batch/train_model_from_master.ps1
 # -----------------------------------------------------------------------------
-# 共通 master（または派生 master）から任意のモデルを学習する汎用スクリプト。
+# 蜈ｱ騾・master・医∪縺溘・豢ｾ逕・master・峨°繧我ｻｻ諢上・繝｢繝・Ν繧貞ｭｦ鄙偵☆繧区ｱ守畑繧ｹ繧ｯ繝ｪ繝励ヨ縲・
 #
-# 目的
+# 逶ｮ逧・
 # ----
-# 1) 特徴量生成（preprocess_*）を実行して X/y/ids と feature_pipeline を用意する
-# 2) train.py を approach 指定で実行し、モデルを models/<Approach>/runs/<model_id>/ に保存する
-# 3) models/<Approach>/latest/train_meta.json を読み、学習結果を要約表示する
-# 4) ModelAlias は互換のため受け取るが、現行 train.py には渡さない
+# 1) 迚ｹ蠕ｴ驥冗函謌撰ｼ・reprocess_*・峨ｒ螳溯｡後＠縺ｦ X/y/ids 縺ｨ feature_pipeline 繧堤畑諢上☆繧・
+# 2) train.py 繧・approach 謖・ｮ壹〒螳溯｡後＠縲√Δ繝・Ν繧・models/<Approach>/runs/<model_id>/ 縺ｫ菫晏ｭ倥☆繧・
+# 3) models/<Approach>/latest/train_meta.json 繧定ｪｭ縺ｿ縲∝ｭｦ鄙堤ｵ先棡繧定ｦ∫ｴ・｡ｨ遉ｺ縺吶ｋ
+# 4) ModelAlias 縺梧欠螳壹＆繧後※縺・ｌ縺ｰ models/<Approach>/<ModelAlias>/ 繧よ峩譁ｰ縺吶ｋ
 #
-# 前提（Phase 2）
+# 蜑肴署・・hase 2・・
 # --------------
-# - YAML を SSOT とし、列選択は features/<approach>.yaml で管理する
-# - preprocess 側は Phase 2 の固定出力（data/processed/<approach> と models/<approach>/latest）を想定
-# - 本PS1は「繰り返し実行」されるため、引数の取りこぼしが事故（列爆増・master誤用）に直結する
+# - YAML 繧・SSOT 縺ｨ縺励∝・驕ｸ謚槭・ features/<approach>.yaml 縺ｧ邂｡逅・☆繧・
+# - preprocess 蛛ｴ縺ｯ Phase 2 縺ｮ蝗ｺ螳壼・蜉幢ｼ・ata/processed/<approach> 縺ｨ models/<approach>/latest・峨ｒ諠ｳ螳・
+# - 譛ｬPS1縺ｯ縲檎ｹｰ繧願ｿ斐＠螳溯｡後阪＆繧後ｋ縺溘ａ縲∝ｼ墓焚縺ｮ蜿悶ｊ縺薙⊂縺励′莠区腐・亥・辷・｢励・master隱､逕ｨ・峨↓逶ｴ邨舌☆繧・
 #
-# 今回の小改修（安全性強化）
+# 莉雁屓縺ｮ蟆乗隼菫ｮ・亥ｮ牙・諤ｧ蠑ｷ蛹厄ｼ・
 # ------------------------
-# - MasterCsv のデフォルトを data\processed\master_finals.csv に変更
-# - FeatureSpecYaml を必須化（未指定時はPS1で即停止）
+# - MasterCsv 縺ｮ繝・ヵ繧ｩ繝ｫ繝医ｒ data\processed\master_finals.csv 縺ｫ螟画峩
+# - FeatureSpecYaml 繧貞ｿ・亥喧・域悴謖・ｮ壽凾縺ｯPS1縺ｧ蜊ｳ蛛懈ｭ｢・・
 # -----------------------------------------------------------------------------
 
 [CmdletBinding()]
@@ -26,7 +26,7 @@ param(
   [string]$RepoRoot   = "",
   [string]$PythonPath = "C:\anaconda3\python.exe",
 
-  # ★ デフォルトを master_finals.csv に変更
+  # 笘・繝・ヵ繧ｩ繝ｫ繝医ｒ master_finals.csv 縺ｫ螟画峩
   [string]$MasterCsv      = "data\processed\master_finals.csv",
 
   [string]$FeaturesOutDir = "",
@@ -34,7 +34,7 @@ param(
 
   [string]$PrepScript = "scripts\preprocess_base_features.py",
 
-  # ★ 必須化
+  # 笘・蠢・亥喧
   [string]$FeatureSpecYaml = "",
 
   [string]$Approach   = "",
@@ -53,13 +53,13 @@ function Info($k, $v) { Write-Host ("INFO {0,-15}: {1}" -f $k, $v) }
 function Ensure-Dir([string]$p) { if (-not (Test-Path $p)) { New-Item -ItemType Directory -Path $p | Out-Null } }
 
 # ---------------------------------------------------------------------------
-# RepoRoot 解決（★修正点：.Path を使わない）
+# RepoRoot 隗｣豎ｺ・遺・菫ｮ豁｣轤ｹ・・Path 繧剃ｽｿ繧上↑縺・ｼ・
 # ---------------------------------------------------------------------------
 if (-not $RepoRoot -or $RepoRoot.Trim() -eq "") {
   $RepoRoot = Resolve-Path (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "..")
 }
 
-# 必須引数チェック（従来挙動＋安全化）
+# 蠢・亥ｼ墓焚繝√ぉ繝・け・亥ｾ捺擂謖吝虚・句ｮ牙・蛹厄ｼ・
 if (-not $Approach -or $Approach.Trim() -eq "") {
   throw "Approach is required. Pass -Approach <name>"
 }
@@ -70,7 +70,7 @@ if (-not $FeatureSpecYaml -or $FeatureSpecYaml.Trim() -eq "") {
   throw "FeatureSpecYaml is required. Pass -FeatureSpecYaml <yaml>"
 }
 
-# フルパス化
+# 繝輔Ν繝代せ蛹・
 $PythonFull = $PythonPath
 if (-not [System.IO.Path]::IsPathRooted($PythonFull)) {
   $PythonFull = Join-Path $RepoRoot $PythonFull
@@ -123,7 +123,7 @@ $PipelineFull = Join-Path $RepoRoot $PipelineDir
 Ensure-Dir $FeatOutFull
 Ensure-Dir $PipelineFull
 
-# ログ
+# 繝ｭ繧ｰ
 Info "RepoRoot"        $RepoRoot
 Info "Python"          $PythonFull
 Info "MasterCsv"       $MasterFull
@@ -151,7 +151,7 @@ if ($LASTEXITCODE -ne 0) {
 Write-Host "OK  features prepared."
 
 # ---------------------------------------------------------------------------
-# 2) train（既存仕様を尊重）
+# 2) train・域里蟄倅ｻ墓ｧ倥ｒ蟆企㍾・・
 # ---------------------------------------------------------------------------
 $train_full = Join-Path $RepoRoot "scripts\train.py"
 if (-not (Test-Path $train_full)) {
@@ -167,10 +167,9 @@ $train_args = @(
 if ($Notes -and $Notes.Trim() -ne "") {
   $train_args += @("--notes", $Notes)
 }
-
-# ModelAlias は互換のため PS1 引数としては残すが、
-# 現行 train.py では未対応のため渡さない
-
+if ($ModelAlias -and $ModelAlias.Trim() -ne "") {
+  # model_alias は現行 train.py では未使用のため渡さない
+}
 if ($LgbmParamsFull -and $LgbmParamsFull.Trim() -ne "") {
   $train_args += @("--lgbm-params-yaml", $LgbmParamsFull)
 }
@@ -191,3 +190,4 @@ if (Test-Path $latest_meta) {
 }
 
 Write-Host "DONE all steps completed."
+
