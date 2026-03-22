@@ -1,5 +1,4 @@
-﻿@'
-param(
+﻿param(
     [string]$PiRoot = "\\192.168.10.125\arkdata",
     [string]$LocalRoot = "C:\Users\user\Desktop\Git\ark-blueprints\data_pi_sync",
     [switch]$Preview
@@ -7,99 +6,80 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+Write-Host "sync_from_pi.ps1 started"
+Write-Host "PiRoot    = $PiRoot"
+Write-Host "LocalRoot = $LocalRoot"
+Write-Host "Preview   = $Preview"
+
 $LogDir = Join-Path $LocalRoot "_sync_logs"
+$RawDst = Join-Path $LocalRoot "raw"
+$RaceinfoDst = Join-Path $LocalRoot "processed\raceinfo"
+$MotorDst = Join-Path $LocalRoot "processed\motor"
+
 New-Item -ItemType Directory -Force -Path $LocalRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+New-Item -ItemType Directory -Force -Path $RawDst | Out-Null
+New-Item -ItemType Directory -Force -Path $RaceinfoDst | Out-Null
+New-Item -ItemType Directory -Force -Path $MotorDst | Out-Null
 
 $TimeStamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $LogFile = Join-Path $LogDir "sync_from_pi_$TimeStamp.log"
 
-function Write-Log {
-    param([string]$Message)
-    $line = "[{0}] {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Message
-    $line | Tee-Object -FilePath $LogFile -Append
+$CommonArgs = @(
+    "/Z",
+    "/FFT",
+    "/R:2",
+    "/W:5",
+    "/COPY:DAT",
+    "/DCOPY:DAT",
+    "/XJ",
+    "/NP",
+    "/TEE",
+    "/LOG+:$LogFile"
+)
+
+if ($Preview) {
+    $CommonArgs += "/L"
 }
 
-function Invoke-RobocopyChecked {
-    param(
-        [string]$Source,
-        [string]$Destination,
-        [string[]]$FileFilter = @("*"),
-        [switch]$Recursive
-    )
+Write-Host ""
+Write-Host "[1/3] raw sync preview/start"
+robocopy `
+    (Join-Path $PiRoot "raw") `
+    $RawDst `
+    "*_raw.csv" "*_refund.csv" `
+    /E `
+    @CommonArgs
 
-    if (-not (Test-Path $Source)) {
-        throw "Source not found: $Source"
-    }
-
-    New-Item -ItemType Directory -Force -Path $Destination | Out-Null
-
-    $args = @($Source, $Destination)
-    $args += $FileFilter
-
-    if ($Recursive) {
-        $args += "/E"
-    }
-
-    $args += @(
-        "/Z",
-        "/FFT",
-        "/R:2",
-        "/W:5",
-        "/COPY:DAT",
-        "/DCOPY:DAT",
-        "/XJ",
-        "/NP",
-        "/TEE",
-        "/NJH",
-        "/NJS",
-        "/LOG+:$LogFile"
-    )
-
-    if ($Preview) {
-        $args += "/L"
-    }
-
-    Write-Log ("robocopy start: " + $Source + " -> " + $Destination + " | filter=" + ($FileFilter -join ",") + " | recursive=" + $Recursive.IsPresent + " | preview=" + $Preview.IsPresent)
-
-    & robocopy @args
-    $exitCode = $LASTEXITCODE
-
-    Write-Log "robocopy exit code: $exitCode"
-
-    if ($exitCode -ge 8) {
-        throw "robocopy failed with exit code $exitCode"
-    }
+if ($LASTEXITCODE -ge 8) {
+    throw "raw robocopy failed: exit code $LASTEXITCODE"
 }
 
-try {
-    Write-Log "=== Sync start ==="
-    Write-Log "PiRoot   = $PiRoot"
-    Write-Log "LocalRoot= $LocalRoot"
-    Write-Log "Preview  = $Preview"
+Write-Host ""
+Write-Host "[2/3] raceinfo sync preview/start"
+robocopy `
+    (Join-Path $PiRoot "processed\raceinfo") `
+    $RaceinfoDst `
+    "raceinfo_*.csv" `
+    /E `
+    @CommonArgs
 
-    $srcRaw = Join-Path $PiRoot "raw"
-    $dstRaw = Join-Path $LocalRoot "raw"
-    Invoke-RobocopyChecked -Source $srcRaw -Destination $dstRaw -FileFilter @("*_raw.csv", "*_refund.csv") -Recursive
-
-    $srcRaceinfo = Join-Path $PiRoot "processed\raceinfo"
-    $dstRaceinfo = Join-Path $LocalRoot "processed\raceinfo"
-    Invoke-RobocopyChecked -Source $srcRaceinfo -Destination $dstRaceinfo -FileFilter @("raceinfo_*.csv") -Recursive
-
-    $srcMotor = Join-Path $PiRoot "processed\motor"
-    $dstMotor = Join-Path $LocalRoot "processed\motor"
-    Invoke-RobocopyChecked -Source $srcMotor -Destination $dstMotor -FileFilter @("motor_id_map__all.csv", "motor_section_features_n__all.csv")
-
-    Write-Log "=== Sync completed successfully ==="
-    Write-Host ""
-    Write-Host "同期完了"
-    Write-Host "ログ: $LogFile"
+if ($LASTEXITCODE -ge 8) {
+    throw "raceinfo robocopy failed: exit code $LASTEXITCODE"
 }
-catch {
-    Write-Log ("ERROR: " + $_.Exception.Message)
-    Write-Host ""
-    Write-Host "同期失敗"
-    Write-Host "ログ: $LogFile"
-    throw
+
+Write-Host ""
+Write-Host "[3/3] motor sync preview/start"
+robocopy `
+    (Join-Path $PiRoot "processed\motor") `
+    $MotorDst `
+    "motor_id_map__all.csv" "motor_section_features_n__all.csv" `
+    @CommonArgs
+
+if ($LASTEXITCODE -ge 8) {
+    throw "motor robocopy failed: exit code $LASTEXITCODE"
 }
-'@ | Set-Content -Path .\sync_from_pi.ps1 -Encoding UTF8
+
+Write-Host ""
+Write-Host "同期完了"
+Write-Host "ログ: $LogFile"
