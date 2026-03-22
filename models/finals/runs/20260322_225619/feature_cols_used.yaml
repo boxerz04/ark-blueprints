@@ -1,6 +1,6 @@
 version: 1
 approach: finals
-model_id: '20260323_004300'
+model_id: '20260322_225619'
 master: C:\Users\user\Desktop\Git\ark-blueprints\data\processed\master_finals.csv
 feature_spec_yaml: C:\Users\user\Desktop\Git\ark-blueprints\features\finals.yaml
 selection_mode: yaml
@@ -467,6 +467,7 @@ numeric_cols:
 - p_nige
 - p_nuki
 - p_sashi
+- precondition_1
 - pred_mark
 - race_ct_current
 - ranking_point_rate
@@ -496,7 +497,6 @@ numeric_cols:
 - wind_speed
 categorical_cols:
 - AB_class
-- precondition_1
 - precondition_2
 - race_attribute
 - race_grade
@@ -531,12 +531,12 @@ adv_like_zero_fill_cols:
 - lr_p_nige
 - lr_p_nuki
 - lr_p_sashi
-n_rows: 22680
+n_rows: 360
 X_shape:
-- 22680
-- 220
+- 360
+- 200
 outputs:
   X: data\processed\finals\X_dense.npz
   y: data\processed\finals\y.csv
   ids: data\processed\finals\ids.csv
-  pipeline: models\finals\runs\20260323_004300\feature_pipeline.pkl
+  pipeline: models\finals\runs\20260322_225619\feature_pipeline.pkl

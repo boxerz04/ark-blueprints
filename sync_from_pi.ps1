@@ -1,6 +1,6 @@
 ﻿param(
     [string]$PiRoot = "\\192.168.10.125\arkdata",
-    [string]$LocalRoot = "C:\Users\user\Desktop\Git\ark-blueprints\data_pi_sync",
+    [string]$LocalRoot = "C:\Users\user\Desktop\Git\ark-blueprints\data",
     [switch]$Preview
 )
 
@@ -13,12 +13,14 @@ Write-Host "Preview   = $Preview"
 
 $LogDir = Join-Path $LocalRoot "_sync_logs"
 $RawDst = Join-Path $LocalRoot "raw"
+$RefundDst = Join-Path $LocalRoot "refund"
 $RaceinfoDst = Join-Path $LocalRoot "processed\raceinfo"
 $MotorDst = Join-Path $LocalRoot "processed\motor"
 
 New-Item -ItemType Directory -Force -Path $LocalRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 New-Item -ItemType Directory -Force -Path $RawDst | Out-Null
+New-Item -ItemType Directory -Force -Path $RefundDst | Out-Null
 New-Item -ItemType Directory -Force -Path $RaceinfoDst | Out-Null
 New-Item -ItemType Directory -Force -Path $MotorDst | Out-Null
 
@@ -43,11 +45,11 @@ if ($Preview) {
 }
 
 Write-Host ""
-Write-Host "[1/3] raw sync preview/start"
+Write-Host "[1/4] raw sync preview/start"
 robocopy `
     (Join-Path $PiRoot "raw") `
     $RawDst `
-    "*_raw.csv" "*_refund.csv" `
+    "*_raw.csv" `
     /E `
     @CommonArgs
 
@@ -56,7 +58,20 @@ if ($LASTEXITCODE -ge 8) {
 }
 
 Write-Host ""
-Write-Host "[2/3] raceinfo sync preview/start"
+Write-Host "[2/4] refund sync preview/start"
+robocopy `
+    (Join-Path $PiRoot "refund") `
+    $RefundDst `
+    "*_refund.csv" `
+    /E `
+    @CommonArgs
+
+if ($LASTEXITCODE -ge 8) {
+    throw "refund robocopy failed: exit code $LASTEXITCODE"
+}
+
+Write-Host ""
+Write-Host "[3/4] raceinfo sync preview/start"
 robocopy `
     (Join-Path $PiRoot "processed\raceinfo") `
     $RaceinfoDst `
@@ -69,7 +84,7 @@ if ($LASTEXITCODE -ge 8) {
 }
 
 Write-Host ""
-Write-Host "[3/3] motor sync preview/start"
+Write-Host "[4/4] motor sync preview/start"
 robocopy `
     (Join-Path $PiRoot "processed\motor") `
     $MotorDst `

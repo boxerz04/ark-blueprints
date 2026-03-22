@@ -1,8 +1,8 @@
 # data フォルダ以下をすべて無視
 data/
 
-# data_pi_sync フォルダ以下をすべて無視
-/data_pi_sync/
+# data_win_backup_20260323 フォルダ以下をすべて無視
+/data_win_backup_20260323/
 
 # 実行ログは管理対象外
 /logs/

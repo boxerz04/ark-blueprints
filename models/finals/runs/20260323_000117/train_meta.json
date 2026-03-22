@@ -1,8 +1,8 @@
 {
-  "model_id": "20260323_004303",
-  "created_at": "2026-03-23 00:43:03",
-  "version_tag": "repro_pi_v1_2_1_finals_hpo_20241001_20251231",
-  "notes": "Pi同期データを用いた 20241001〜20251231 の finals hpo 再現学習",
+  "model_id": "20260323_000117",
+  "created_at": "2026-03-23 00:01:17",
+  "version_tag": "exp_pi_sync_20260314_20260321",
+  "notes": "pi sync data for 20260314-20260321",
   "git_commit": "d4b7cee",
   "lgbm_params_yaml": "C:\\Users\\user\\Desktop\\Git\\ark-blueprints\\models\\finals\\params.yaml",
   "lgbm_params_yaml_sha256": "9e35ed9a59d2571e5e1a0492c07be48f2d12e458893f936c31241f3e096bbd15",
@@ -19,15 +19,15 @@
     "min_split_gain": 0,
     "min_child_samples": 80
   },
-  "n_rows": 22680,
-  "n_features": 220,
+  "n_rows": 360,
+  "n_features": 200,
   "sparse": false,
   "eval": {
-    "auc": 0.8204846238907085,
-    "pr_auc": 0.7254119359151601,
-    "logloss": 0.46891476663311593,
-    "accuracy": 0.7843915343915344,
-    "mcc": 0.488920253570691,
-    "top2_hit": 0.9338624338624338
+    "auc": 0.8836805555555555,
+    "pr_auc": 0.8655277451239887,
+    "logloss": 0.3837395374391478,
+    "accuracy": 0.8472222222222222,
+    "mcc": 0.6482037235521644,
+    "top2_hit": 1.0
   }
 }
