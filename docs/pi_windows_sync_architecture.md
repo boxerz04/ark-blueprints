@@ -20,14 +20,14 @@
 
 ```mermaid
 flowchart LR
-    subgraph PI[Raspberry Pi 3B+ + SSD]
-        Cron[cron]
-        Scrape[scrape.py\nHTML取得]
-        Raw[build_raw_csv.py\nraw/refund生成]
-        Raceinfo[build_raceinfo.py\nraceinfo生成]
-        Motor[build_motor_artifacts_from_bins.py\n+ build_raw_with_motor_joined.py\n+ build_motor_section_*.py]
-        PiData[/mnt/ssd/.../arkdata\nSMB共有]
-        PiLogs[Pi側ログ保存]
+    subgraph PI["Raspberry Pi 3B+ + SSD"]
+        Cron["cron / scheduler"]
+        Scrape["scrape.py<br/>HTML取得"]
+        Raw["build_raw_csv.py<br/>raw / refund 生成"]
+        Raceinfo["build_raceinfo.py<br/>raceinfo 生成"]
+        Motor["motor pipeline<br/>motor成果物生成"]
+        PiData["Pi共有データ<br/>arkdata"]
+        PiLogs["Pi側ログ保存"]
 
         Cron --> Scrape --> Raw
         Scrape --> Raceinfo
@@ -37,19 +37,19 @@ flowchart LR
         Cron --> PiLogs
     end
 
-    subgraph WIN[Windows]
-        Sync[sync_from_pi.ps1\n定時同期]
-        LocalData[data\\raw\ndata\\refund\ndata\\processed\\raceinfo\ndata\\processed\\motor]
-        Master[batch/build_master_range.ps1\nmaster / master_finals 構築]
-        Train[batch/train_model_from_master.ps1\n学習]
-        SyncLogs[data\\_sync_logs]
+    subgraph WIN["Windows PC"]
+        Sync["sync_from_pi.ps1<br/>定時同期"]
+        LocalData["Windows ローカル data<br/>raw / refund / raceinfo / motor"]
+        Master["build_master_range.ps1<br/>master / master_finals 構築"]
+        Train["train_model_from_master.ps1<br/>学習"]
+        SyncLogs["同期ログ<br/>data/_sync_logs"]
 
         Sync --> LocalData
         Sync --> SyncLogs
         LocalData --> Master --> Train
     end
 
-    PiData -- SMB / Samba --> Sync
+    PiData -- "SMB / Samba" --> Sync
 ```
 
 ---
