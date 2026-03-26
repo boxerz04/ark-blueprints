@@ -39,8 +39,17 @@ def save_prefetched_odds3t(date: str, jcd: str, rno: str, prefetched_odds3t_path
     )
 
     try:
+        if not os.path.exists(prefetched_odds3t_path):
+            msg = f"prefetched odds3t path not found: {prefetched_odds3t_path}"
+            print(f"[ERROR] save_prefetched_odds3t: {msg}")
+            return SaveResult(ok=False, message=msg)
+
         with open(prefetched_odds3t_path, "rb") as rf:
             content = rf.read()
+        if len(content) == 0 or len(content.strip()) == 0:
+            msg = "empty prefetched odds3t content"
+            print(f"[ERROR] save_prefetched_odds3t: {msg}")
+            return SaveResult(ok=False, message=msg)
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         with open(save_path, "wb") as wf:
             wf.write(content)
