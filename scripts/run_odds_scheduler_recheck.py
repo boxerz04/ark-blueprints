@@ -292,6 +292,86 @@ def run_scraper_job_with_prefetched_odds3t(
     )
 
 
+def run_fallback_scraper_job(
+    job: dict,
+    python_exec: str,
+    status_csv: str,
+    stats: dict,
+    logger: logging.Logger,
+    recheck_ok: bool,
+    latest_deadline_dt: datetime | None,
+):
+    started_at = datetime.now()
+    logger.info(
+        "[START] seq=%s race_id=%s jcd=%s rno=%s title=%s (fallback=scrape_odds_all.py)",
+        job["seq"],
+        job["race_id"],
+        job["jcd"],
+        job["rno"],
+        job["title"],
+    )
+
+    try:
+        script_path = os.path.join(project_root(), "scripts", "scrape_odds_all.py")
+        cmd = [
+            python_exec,
+            script_path,
+            "--date",
+            job["date"],
+            "--jcd",
+            str(job["jcd"]),
+            "--rno",
+            str(job["rno"]),
+        ]
+        cp = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+        returncode, stdout_text, stderr_text = int(cp.returncode), cp.stdout or "", cp.stderr or ""
+    except Exception as e:
+        returncode, stdout_text, stderr_text = 1, "", f"subprocess error: {e}"
+
+    parsed = parse_result_line(stdout_text)
+    status, saved_3t, saved_2tf = infer_status(returncode, parsed)
+    finished_at = datetime.now()
+
+    row = {
+        "date": job["date"],
+        "race_id": job["race_id"],
+        "seq": job["seq"],
+        "jcd": job["jcd"],
+        "rno": job["rno"],
+        "title": job["title"],
+        "initial_deadline_dt": job["initial_deadline_dt"],
+        "latest_deadline_dt": latest_deadline_dt.strftime("%Y-%m-%d %H:%M") if latest_deadline_dt else "",
+        "deadline_dt": job["deadline_dt"],
+        "scheduled_at": job["scheduled_at"],
+        "started_at": started_at.strftime("%Y-%m-%d %H:%M:%S"),
+        "finished_at": finished_at.strftime("%Y-%m-%d %H:%M:%S"),
+        "returncode": returncode,
+        "status": status,
+        "saved_odds3t": saved_3t,
+        "saved_odds2tf": saved_2tf,
+        "recheck_ok": 1 if recheck_ok else 0,
+        "reschedule_count": job["reschedule_count"],
+        "stdout_last": tail_text(stdout_text),
+        "stderr_last": tail_text(stderr_text),
+    }
+    append_status_row(status_csv, row)
+
+    stats["done"] += 1
+    stats[status] += 1
+
+    logger.info(
+        "[END] seq=%s race_id=%s returncode=%s status=%s saved_odds3t=%s saved_odds2tf=%s recheck_ok=%s reschedule_count=%s (fallback=scrape_odds_all.py)",
+        job["seq"],
+        job["race_id"],
+        returncode,
+        status,
+        saved_3t,
+        saved_2tf,
+        1 if recheck_ok else 0,
+        job["reschedule_count"],
+    )
+
+
 def handle_job_with_recheck(
     job: dict,
     mins_before: int,
@@ -304,9 +384,34 @@ def handle_job_with_recheck(
     now = datetime.now()
     latest_deadline_dt = None
     recheck_ok = False
+    prefetched_html = ""
+    prefetched_html_available = False
 
     try:
         prefetched_html, latest_deadline_dt, recheck_ok = fetch_prefetched_odds3t(job)
+        prefetched_html_available = bool(prefetched_html and prefetched_html.strip())
+        if not prefetched_html_available:
+            logger.warning(
+                "[RECHECK_FAIL] seq=%s race_id=%s reason=odds3t fetch failed (empty html)",
+                job["seq"],
+                job["race_id"],
+            )
+            logger.warning(
+                "[FALLBACK] seq=%s race_id=%s scrape_odds_all.py にフォールバックします",
+                job["seq"],
+                job["race_id"],
+            )
+            run_fallback_scraper_job(
+                job=job,
+                python_exec=python_exec,
+                status_csv=status_csv,
+                stats=stats,
+                logger=logger,
+                recheck_ok=False,
+                latest_deadline_dt=latest_deadline_dt,
+            )
+            return schedule.CancelJob
+
         if latest_deadline_dt and debug_force_deadline_delay_minutes:
             latest_deadline_dt = latest_deadline_dt + timedelta(minutes=debug_force_deadline_delay_minutes)
 
@@ -348,10 +453,27 @@ def handle_job_with_recheck(
             return schedule.CancelJob
 
     except Exception as e:
-        logger.warning("[RECHECK_FAIL] seq=%s race_id=%s reason=%s", job["seq"], job["race_id"], e)
-        recheck_ok = False
-        if "prefetched_html" not in locals():
-            prefetched_html = ""
+        logger.warning(
+            "[RECHECK_FAIL] seq=%s race_id=%s reason=odds3t fetch failed: %s",
+            job["seq"],
+            job["race_id"],
+            e,
+        )
+        logger.warning(
+            "[FALLBACK] seq=%s race_id=%s scrape_odds_all.py にフォールバックします",
+            job["seq"],
+            job["race_id"],
+        )
+        run_fallback_scraper_job(
+            job=job,
+            python_exec=python_exec,
+            status_csv=status_csv,
+            stats=stats,
+            logger=logger,
+            recheck_ok=False,
+            latest_deadline_dt=latest_deadline_dt,
+        )
+        return schedule.CancelJob
 
     if not recheck_ok:
         logger.warning(
