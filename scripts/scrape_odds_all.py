@@ -13,6 +13,8 @@ from dataclasses import dataclass
 import aiohttp
 from bs4 import BeautifulSoup
 
+from odds_profile_paths import resolve_odds_profile_paths
+
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -57,27 +59,20 @@ async def fetch_and_save(session: aiohttp.ClientSession, url: str, save_path: st
         return SaveResult(False, title_text, f"error={e}")
 
 
-async def main(date: str, jcd: str, rno: str) -> int:
+async def main(date: str, jcd: str, rno: str, profile: str, mins_before: int) -> int:
     jcd2 = str(jcd).zfill(2)
     rno2 = str(rno).zfill(2)
+    paths = resolve_odds_profile_paths(ROOT_DIR, profile, mins_before)
 
     url_3t = f"https://www.boatrace.jp/owpc/pc/race/odds3t?rno={rno}&jcd={jcd2}&hd={date}"
     save_path_3t = os.path.join(
-        ROOT_DIR,
-        "data",
-        "html",
-        "odds3t",
-        date,
+        paths.odds3t_date_dir(date),
         f"odds3t{date}{jcd2}{rno2}.html",
     )
 
     url_2tf = f"https://www.boatrace.jp/owpc/pc/race/odds2tf?rno={rno}&jcd={jcd2}&hd={date}"
     save_path_2tf = os.path.join(
-        ROOT_DIR,
-        "data",
-        "html",
-        "odds2tf",
-        date,
+        paths.odds2tf_date_dir(date),
         f"odds2tf{date}{jcd2}{rno2}.html",
     )
 
@@ -117,10 +112,12 @@ if __name__ == "__main__":
     parser.add_argument("--date", required=True, help="日付 (例: 20260326)")
     parser.add_argument("--jcd", required=True, help="場コード (例: 20)")
     parser.add_argument("--rno", required=True, help="レース番号 (例: 12)")
+    parser.add_argument("--profile", required=True, choices=["5m", "2m"], help="出力profile")
+    parser.add_argument("--mins_before", type=int, required=True, choices=[5, 2], help="締切何分前")
     args = parser.parse_args()
 
     try:
-        exit_code = asyncio.run(main(args.date, args.jcd, args.rno))
+        exit_code = asyncio.run(main(args.date, args.jcd, args.rno, args.profile, args.mins_before))
     except Exception as e:
         # 致命的エラー時も可能な範囲で RESULT を出す
         jcd2 = str(args.jcd).zfill(2)
