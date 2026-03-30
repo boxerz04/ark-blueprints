@@ -16,6 +16,8 @@ import pandas as pd
 import schedule
 from bs4 import BeautifulSoup
 
+from odds_profile_paths import resolve_odds_profile_paths
+
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -53,6 +55,7 @@ def setup_logger(log_file: str) -> logging.Logger:
 def parse_args():
     p = argparse.ArgumentParser(description="odds3t再利用型 締切再確認つき 全レーススケジューラ")
     p.add_argument("--timeline", default=None, help="timeline CSV path")
+    p.add_argument("--profile", required=True, choices=["5m", "2m"], help="出力profile")
     p.add_argument("--mins_before", type=int, default=5, help="何分前実行か")
     p.add_argument("--python", default=sys.executable, help="python executable")
     p.add_argument("--log_file", default=None, help="ログ出力先")
@@ -172,6 +175,8 @@ def ensure_status_csv(status_csv: str):
         return
     header = [
         "date",
+        "profile",
+        "mins_before",
         "race_id",
         "seq",
         "jcd",
@@ -210,6 +215,8 @@ def run_scraper_job_with_prefetched_odds3t(
     logger: logging.Logger,
     recheck_ok: bool,
     latest_deadline_dt: datetime | None,
+    profile: str,
+    mins_before: int,
 ):
     started_at = datetime.now()
     logger.info("[START] seq=%s race_id=%s jcd=%s rno=%s title=%s", job["seq"], job["race_id"], job["jcd"], job["rno"], job["title"])
@@ -236,6 +243,10 @@ def run_scraper_job_with_prefetched_odds3t(
             str(job.get("title", "")),
             "--latest_deadline_dt",
             latest_deadline_dt.strftime("%Y-%m-%d %H:%M") if latest_deadline_dt else "",
+            "--profile",
+            profile,
+            "--mins_before",
+            str(mins_before),
         ]
         cp = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
         returncode, stdout_text, stderr_text = int(cp.returncode), cp.stdout or "", cp.stderr or ""
@@ -254,6 +265,8 @@ def run_scraper_job_with_prefetched_odds3t(
 
     row = {
         "date": job["date"],
+        "profile": profile,
+        "mins_before": mins_before,
         "race_id": job["race_id"],
         "seq": job["seq"],
         "jcd": job["jcd"],
@@ -300,6 +313,8 @@ def run_fallback_scraper_job(
     logger: logging.Logger,
     recheck_ok: bool,
     latest_deadline_dt: datetime | None,
+    profile: str,
+    mins_before: int,
 ):
     started_at = datetime.now()
     logger.info(
@@ -322,6 +337,10 @@ def run_fallback_scraper_job(
             str(job["jcd"]),
             "--rno",
             str(job["rno"]),
+            "--profile",
+            profile,
+            "--mins_before",
+            str(mins_before),
         ]
         cp = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
         returncode, stdout_text, stderr_text = int(cp.returncode), cp.stdout or "", cp.stderr or ""
@@ -334,6 +353,8 @@ def run_fallback_scraper_job(
 
     row = {
         "date": job["date"],
+        "profile": profile,
+        "mins_before": mins_before,
         "race_id": job["race_id"],
         "seq": job["seq"],
         "jcd": job["jcd"],
@@ -380,6 +401,7 @@ def handle_job_with_recheck(
     stats: dict,
     logger: logging.Logger,
     debug_force_deadline_delay_minutes: int = 0,
+    profile: str = "5m",
 ):
     now = datetime.now()
     latest_deadline_dt = None
@@ -409,6 +431,8 @@ def handle_job_with_recheck(
                 logger=logger,
                 recheck_ok=False,
                 latest_deadline_dt=latest_deadline_dt,
+                profile=profile,
+                mins_before=mins_before,
             )
             return schedule.CancelJob
 
@@ -440,6 +464,7 @@ def handle_job_with_recheck(
                 stats=stats,
                 logger=logger,
                 debug_force_deadline_delay_minutes=debug_force_deadline_delay_minutes,
+                profile=profile,
             )
             logger.info(
                 "[RESCHEDULE] seq=%s race_id=%s old_run_at=%s new_run_at=%s latest_deadline=%s count=%s",
@@ -472,6 +497,8 @@ def handle_job_with_recheck(
             logger=logger,
             recheck_ok=False,
             latest_deadline_dt=latest_deadline_dt,
+            profile=profile,
+            mins_before=mins_before,
         )
         return schedule.CancelJob
 
@@ -491,6 +518,8 @@ def handle_job_with_recheck(
         logger=logger,
         recheck_ok=recheck_ok,
         latest_deadline_dt=latest_deadline_dt,
+        profile=profile,
+        mins_before=mins_before,
     )
     return schedule.CancelJob
 
@@ -498,10 +527,11 @@ def handle_job_with_recheck(
 def main():
     args = parse_args()
     root = project_root()
+    profile_paths = resolve_odds_profile_paths(root, args.profile, args.mins_before)
 
-    log_file = args.log_file or os.path.join(root, "logs", "run_odds_scheduler_recheck.log")
+    log_file = args.log_file or profile_paths.scheduler_log_path()
     logger = setup_logger(log_file)
-    logger.info("run_odds_scheduler_recheck 起動")
+    logger.info("run_odds_scheduler_recheck 起動 profile=%s mins_before=%s", args.profile, args.mins_before)
 
     timeline_csv = args.timeline or guess_latest_timeline(root)
     if not timeline_csv:
@@ -526,7 +556,7 @@ def main():
         sys.exit(0)
 
     today = datetime.now().strftime("%Y%m%d")
-    status_csv = args.status_csv or os.path.join(root, "data", "odds_status", f"{today}_odds_status.csv")
+    status_csv = args.status_csv or profile_paths.status_csv_path(today)
     ensure_status_csv(status_csv)
     logger.info("status CSV: %s", status_csv)
 
@@ -585,6 +615,7 @@ def main():
             stats=stats,
             logger=logger,
             debug_force_deadline_delay_minutes=args.debug_force_deadline_delay_minutes,
+            profile=args.profile,
         )
 
     logger.info("%s 件のジョブを登録しました。待機中...", len(jobs))

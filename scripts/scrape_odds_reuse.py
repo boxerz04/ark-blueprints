@@ -10,6 +10,8 @@ import sys
 import urllib.request
 from dataclasses import dataclass
 
+from odds_profile_paths import resolve_odds_profile_paths
+
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HEADERS = {
     "User-Agent": (
@@ -26,15 +28,12 @@ class SaveResult:
     message: str
 
 
-def save_prefetched_odds3t(date: str, jcd: str, rno: str, prefetched_odds3t_path: str) -> SaveResult:
+def save_prefetched_odds3t(date: str, jcd: str, rno: str, prefetched_odds3t_path: str, profile: str, mins_before: int) -> SaveResult:
     jcd2 = str(jcd).zfill(2)
     rno2 = str(rno).zfill(2)
+    paths = resolve_odds_profile_paths(ROOT_DIR, profile, mins_before)
     save_path = os.path.join(
-        ROOT_DIR,
-        "data",
-        "html",
-        "odds3t",
-        date,
+        paths.odds3t_date_dir(date),
         f"odds3t{date}{jcd2}{rno2}.html",
     )
 
@@ -60,16 +59,13 @@ def save_prefetched_odds3t(date: str, jcd: str, rno: str, prefetched_odds3t_path
         return SaveResult(ok=False, message=f"error={e}")
 
 
-def fetch_and_save_odds2tf(date: str, jcd: str, rno: str, timeout: int = 15) -> SaveResult:
+def fetch_and_save_odds2tf(date: str, jcd: str, rno: str, profile: str, mins_before: int, timeout: int = 15) -> SaveResult:
     jcd2 = str(jcd).zfill(2)
     rno2 = str(rno).zfill(2)
+    paths = resolve_odds_profile_paths(ROOT_DIR, profile, mins_before)
     url = f"https://www.boatrace.jp/owpc/pc/race/odds2tf?rno={rno}&jcd={jcd2}&hd={date}"
     save_path = os.path.join(
-        ROOT_DIR,
-        "data",
-        "html",
-        "odds2tf",
-        date,
+        paths.odds2tf_date_dir(date),
         f"odds2tf{date}{jcd2}{rno2}.html",
     )
 
@@ -108,16 +104,25 @@ def parse_args():
     p.add_argument("--prefetched_odds3t_path", required=True, help="事前取得odds3t HTMLパス")
     p.add_argument("--title", default="", help="タイトル（任意）")
     p.add_argument("--latest_deadline_dt", default="", help="再確認時締切（任意）")
+    p.add_argument("--profile", required=True, choices=["5m", "2m"], help="出力profile")
+    p.add_argument("--mins_before", type=int, required=True, choices=[5, 2], help="締切何分前")
     return p.parse_args()
 
 
 def main() -> int:
     args = parse_args()
 
-    res3 = save_prefetched_odds3t(args.date, args.jcd, args.rno, args.prefetched_odds3t_path)
+    res3 = save_prefetched_odds3t(
+        args.date,
+        args.jcd,
+        args.rno,
+        args.prefetched_odds3t_path,
+        args.profile,
+        args.mins_before,
+    )
     saved_odds3t = 1 if res3.ok else 0
 
-    res2 = fetch_and_save_odds2tf(args.date, args.jcd, args.rno)
+    res2 = fetch_and_save_odds2tf(args.date, args.jcd, args.rno, args.profile, args.mins_before)
     saved_odds2tf = 1 if res2.ok else 0
 
     status, rc = classify_result(saved_odds3t, saved_odds2tf)
