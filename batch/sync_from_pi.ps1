@@ -20,6 +20,7 @@ $TimelineDst = Join-Path $LocalRoot "timeline"
 $OddsStatusDst = Join-Path $LocalRoot "odds_status"
 $Odds3tDst = Join-Path $LocalRoot "html\odds3t"
 $Odds2tfDst = Join-Path $LocalRoot "html\odds2tf"
+$Odds3fDst = Join-Path $LocalRoot "html\odds3f"
 
 New-Item -ItemType Directory -Force -Path $LocalRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
@@ -31,6 +32,7 @@ New-Item -ItemType Directory -Force -Path $TimelineDst | Out-Null
 New-Item -ItemType Directory -Force -Path $OddsStatusDst | Out-Null
 New-Item -ItemType Directory -Force -Path $Odds3tDst | Out-Null
 New-Item -ItemType Directory -Force -Path $Odds2tfDst | Out-Null
+New-Item -ItemType Directory -Force -Path $Odds3fDst | Out-Null
 
 $TimeStamp = Get-Date -Format "yyyyMMdd_HHmmss"
 $LogFile = Join-Path $LogDir "sync_from_pi_$TimeStamp.log"
@@ -53,7 +55,7 @@ if ($Preview) {
 }
 
 Write-Host ""
-Write-Host "[1/8] raw sync preview/start"
+Write-Host "[1/9] raw sync preview/start"
 robocopy `
     (Join-Path $PiRoot "raw") `
     $RawDst `
@@ -66,7 +68,7 @@ if ($LASTEXITCODE -ge 8) {
 }
 
 Write-Host ""
-Write-Host "[2/8] refund sync preview/start"
+Write-Host "[2/9] refund sync preview/start"
 robocopy `
     (Join-Path $PiRoot "refund") `
     $RefundDst `
@@ -79,7 +81,7 @@ if ($LASTEXITCODE -ge 8) {
 }
 
 Write-Host ""
-Write-Host "[3/8] raceinfo sync preview/start"
+Write-Host "[3/9] raceinfo sync preview/start"
 robocopy `
     (Join-Path $PiRoot "processed\raceinfo") `
     $RaceinfoDst `
@@ -92,7 +94,7 @@ if ($LASTEXITCODE -ge 8) {
 }
 
 Write-Host ""
-Write-Host "[4/8] motor sync preview/start"
+Write-Host "[4/9] motor sync preview/start"
 robocopy `
     (Join-Path $PiRoot "processed\motor") `
     $MotorDst `
@@ -104,7 +106,7 @@ if ($LASTEXITCODE -ge 8) {
 }
 
 Write-Host ""
-Write-Host "[5/8] timeline sync preview/start"
+Write-Host "[5/9] timeline sync preview/start"
 robocopy `
     (Join-Path $PiRoot "timeline") `
     $TimelineDst `
@@ -117,7 +119,7 @@ if ($LASTEXITCODE -ge 8) {
 }
 
 Write-Host ""
-Write-Host "[6/8] odds_status sync preview/start"
+Write-Host "[6/9] odds_status sync preview/start"
 robocopy `
     (Join-Path $PiRoot "odds_status") `
     $OddsStatusDst `
@@ -130,7 +132,7 @@ if ($LASTEXITCODE -ge 8) {
 }
 
 Write-Host ""
-Write-Host "[7/8] html\\odds3t sync preview/start"
+Write-Host "[7/9] html\\odds3t sync preview/start"
 robocopy `
     (Join-Path $PiRoot "html\odds3t") `
     $Odds3tDst `
@@ -143,7 +145,7 @@ if ($LASTEXITCODE -ge 8) {
 }
 
 Write-Host ""
-Write-Host "[8/8] html\\odds2tf sync preview/start"
+Write-Host "[8/9] html\\odds2tf sync preview/start"
 robocopy `
     (Join-Path $PiRoot "html\odds2tf") `
     $Odds2tfDst `
@@ -153,6 +155,19 @@ robocopy `
 
 if ($LASTEXITCODE -ge 8) {
     throw "html\\odds2tf robocopy failed: exit code $LASTEXITCODE"
+}
+
+Write-Host ""
+Write-Host "[9/9] html\\odds3f sync preview/start"
+robocopy `
+    (Join-Path $PiRoot "html\odds3f") `
+    $Odds3fDst `
+    "*" `
+    /E `
+    @CommonArgs
+
+if ($LASTEXITCODE -ge 8) {
+    throw "html\\odds3f robocopy failed: exit code $LASTEXITCODE"
 }
 
 Write-Host ""
