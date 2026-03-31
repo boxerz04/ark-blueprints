@@ -15,6 +15,7 @@ class OddsProfilePaths:
     mins_before: int
     odds3t_dir: str
     odds2tf_dir: str
+    odds3f_dir: str
     status_dir: str
     logs_dir: str
 
@@ -23,6 +24,9 @@ class OddsProfilePaths:
 
     def odds2tf_date_dir(self, date: str) -> str:
         return os.path.join(self.odds2tf_dir, self.profile, date)
+
+    def odds3f_date_dir(self, date: str) -> str:
+        return os.path.join(self.odds3f_dir, self.profile, date)
 
     def status_csv_path(self, date: str) -> str:
         return os.path.join(self.status_dir, self.profile, f"{date}_odds_status_recheck.csv")
@@ -45,6 +49,7 @@ def resolve_odds_profile_paths(root_dir: str, profile: str, mins_before: int) ->
         mins_before=expected,
         odds3t_dir=os.path.join(root_dir, "data", "html", "odds3t"),
         odds2tf_dir=os.path.join(root_dir, "data", "html", "odds2tf"),
+        odds3f_dir=os.path.join(root_dir, "data", "html", "odds3f"),
         status_dir=os.path.join(root_dir, "data", "odds_status"),
         logs_dir=os.path.join(root_dir, "logs"),
     )

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 scrape_odds_reuse.py
-再確認時に事前取得したodds3t HTMLを再利用して保存し、odds2tfを追加取得する。
+再確認時に事前取得したodds3t HTMLを再利用して保存し、odds2tf/odds3fを追加取得する。
 """
 
 import argparse
@@ -88,16 +88,46 @@ def fetch_and_save_odds2tf(date: str, jcd: str, rno: str, profile: str, mins_bef
         return SaveResult(ok=False, message=f"error={e}")
 
 
-def classify_result(saved_odds3t: int, saved_odds2tf: int) -> tuple[str, int]:
-    if saved_odds3t == 1 and saved_odds2tf == 1:
+def fetch_and_save_odds3f(date: str, jcd: str, rno: str, profile: str, mins_before: int, timeout: int = 15) -> SaveResult:
+    jcd2 = str(jcd).zfill(2)
+    rno2 = str(rno).zfill(2)
+    paths = resolve_odds_profile_paths(ROOT_DIR, profile, mins_before)
+    url = f"https://www.boatrace.jp/owpc/pc/race/odds3f?rno={rno}&jcd={jcd2}&hd={date}"
+    save_path = os.path.join(
+        paths.odds3f_date_dir(date),
+        f"odds3f{date}{jcd2}{rno2}.html",
+    )
+
+    try:
+        req = urllib.request.Request(url, headers=HEADERS)
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            status = getattr(resp, "status", 200)
+            if status != 200:
+                return SaveResult(ok=False, message=f"HTTP {status}")
+            content = resp.read()
+
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        with open(save_path, "wb") as wf:
+            wf.write(content)
+
+        print(f"[SAVED] {save_path} (odds3f)")
+        return SaveResult(ok=True, message=f"saved:{save_path}")
+    except Exception as e:
+        print(f"[ERROR] fetch_and_save_odds3f: {e}")
+        return SaveResult(ok=False, message=f"error={e}")
+
+
+def classify_result(saved_odds3t: int, saved_odds2tf: int, saved_odds3f: int) -> tuple[str, int]:
+    saved_count = saved_odds3t + saved_odds2tf + saved_odds3f
+    if saved_count == 3:
         return "success", 0
-    if saved_odds3t == 1 or saved_odds2tf == 1:
+    if saved_count >= 1:
         return "partial", 2
     return "failed", 1
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="prefetched odds3t再利用保存 + odds2tf追加取得")
+    p = argparse.ArgumentParser(description="prefetched odds3t再利用保存 + odds2tf/odds3f追加取得")
     p.add_argument("--date", required=True, help="日付 (YYYYMMDD)")
     p.add_argument("--jcd", required=True, help="場コード")
     p.add_argument("--rno", required=True, help="レース番号")
@@ -125,7 +155,10 @@ def main() -> int:
     res2 = fetch_and_save_odds2tf(args.date, args.jcd, args.rno, args.profile, args.mins_before)
     saved_odds2tf = 1 if res2.ok else 0
 
-    status, rc = classify_result(saved_odds3t, saved_odds2tf)
+    res3f = fetch_and_save_odds3f(args.date, args.jcd, args.rno, args.profile, args.mins_before)
+    saved_odds3f = 1 if res3f.ok else 0
+
+    status, rc = classify_result(saved_odds3t, saved_odds2tf, saved_odds3f)
     jcd2 = str(args.jcd).zfill(2)
     rno2 = str(args.rno).zfill(2)
     print(
@@ -133,6 +166,7 @@ def main() -> int:
         f"status={status} "
         f"saved_odds3t={saved_odds3t} "
         f"saved_odds2tf={saved_odds2tf} "
+        f"saved_odds3f={saved_odds3f} "
         f"jcd={jcd2} rno={rno2} date={args.date}"
     )
     return rc
@@ -145,5 +179,5 @@ if __name__ == "__main__":
         raise
     except Exception as e:
         print(f"[FATAL] {e}")
-        print("RESULT status=failed saved_odds3t=0 saved_odds2tf=0 jcd=00 rno=00 date=00000000")
+        print("RESULT status=failed saved_odds3t=0 saved_odds2tf=0 saved_odds3f=0 jcd=00 rno=00 date=00000000")
         raise SystemExit(1)
