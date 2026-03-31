@@ -130,7 +130,7 @@ def fetch_prefetched_odds3t(job: dict) -> tuple[str, datetime | None, bool]:
 
 
 def parse_result_line(stdout_text: str) -> dict:
-    result = {"status": None, "saved_odds3t": None, "saved_odds2tf": None}
+    result = {"status": None, "saved_odds3t": None, "saved_odds2tf": None, "saved_odds3f": None}
     lines = [ln.strip() for ln in (stdout_text or "").splitlines() if ln.strip()]
     result_lines = [ln for ln in lines if ln.startswith("RESULT ")]
     if not result_lines:
@@ -140,26 +140,45 @@ def parse_result_line(stdout_text: str) -> dict:
     m_status = re.search(r"status=(\w+)", last)
     m_3t = re.search(r"saved_odds3t=(\d+)", last)
     m_2tf = re.search(r"saved_odds2tf=(\d+)", last)
+    m_3f = re.search(r"saved_odds3f=(\d+)", last)
     if m_status:
         result["status"] = m_status.group(1)
     if m_3t:
         result["saved_odds3t"] = int(m_3t.group(1))
     if m_2tf:
         result["saved_odds2tf"] = int(m_2tf.group(1))
+    if m_3f:
+        result["saved_odds3f"] = int(m_3f.group(1))
     return result
 
 
-def infer_status(returncode: int, parsed: dict) -> tuple[str, int, int]:
+def infer_status(returncode: int, parsed: dict) -> tuple[str, int, int, int]:
     status = parsed.get("status")
     saved_3t = parsed.get("saved_odds3t")
     saved_2tf = parsed.get("saved_odds2tf")
-    if status in {"success", "partial", "failed"} and saved_3t is not None and saved_2tf is not None:
-        return status, int(saved_3t), int(saved_2tf)
+    saved_3f = parsed.get("saved_odds3f")
+    if status in {"success", "partial", "failed"} and saved_3t is not None and saved_2tf is not None and saved_3f is not None:
+        return status, int(saved_3t), int(saved_2tf), int(saved_3f)
     if returncode == 0:
-        return "success", 1 if saved_3t is None else int(saved_3t), 1 if saved_2tf is None else int(saved_2tf)
+        return (
+            "success",
+            1 if saved_3t is None else int(saved_3t),
+            1 if saved_2tf is None else int(saved_2tf),
+            1 if saved_3f is None else int(saved_3f),
+        )
     if returncode == 2:
-        return "partial", 0 if saved_3t is None else int(saved_3t), 0 if saved_2tf is None else int(saved_2tf)
-    return "failed", 0 if saved_3t is None else int(saved_3t), 0 if saved_2tf is None else int(saved_2tf)
+        return (
+            "partial",
+            0 if saved_3t is None else int(saved_3t),
+            0 if saved_2tf is None else int(saved_2tf),
+            0 if saved_3f is None else int(saved_3f),
+        )
+    return (
+        "failed",
+        0 if saved_3t is None else int(saved_3t),
+        0 if saved_2tf is None else int(saved_2tf),
+        0 if saved_3f is None else int(saved_3f),
+    )
 
 
 def tail_text(text: str | None, max_len: int = 300) -> str:
@@ -192,6 +211,7 @@ def ensure_status_csv(status_csv: str):
         "status",
         "saved_odds3t",
         "saved_odds2tf",
+        "saved_odds3f",
         "recheck_ok",
         "reschedule_count",
         "stdout_last",
@@ -260,7 +280,7 @@ def run_scraper_job_with_prefetched_odds3t(
                 logger.warning("temp file cleanup failed: %s", e)
 
     parsed = parse_result_line(stdout_text)
-    status, saved_3t, saved_2tf = infer_status(returncode, parsed)
+    status, saved_3t, saved_2tf, saved_3f = infer_status(returncode, parsed)
     finished_at = datetime.now()
 
     row = {
@@ -282,6 +302,7 @@ def run_scraper_job_with_prefetched_odds3t(
         "status": status,
         "saved_odds3t": saved_3t,
         "saved_odds2tf": saved_2tf,
+        "saved_odds3f": saved_3f,
         "recheck_ok": 1 if recheck_ok else 0,
         "reschedule_count": job["reschedule_count"],
         "stdout_last": tail_text(stdout_text),
@@ -293,13 +314,14 @@ def run_scraper_job_with_prefetched_odds3t(
     stats[status] += 1
 
     logger.info(
-        "[END] seq=%s race_id=%s returncode=%s status=%s saved_odds3t=%s saved_odds2tf=%s recheck_ok=%s reschedule_count=%s",
+        "[END] seq=%s race_id=%s returncode=%s status=%s saved_odds3t=%s saved_odds2tf=%s saved_odds3f=%s recheck_ok=%s reschedule_count=%s",
         job["seq"],
         job["race_id"],
         returncode,
         status,
         saved_3t,
         saved_2tf,
+        saved_3f,
         1 if recheck_ok else 0,
         job["reschedule_count"],
     )
@@ -348,7 +370,7 @@ def run_fallback_scraper_job(
         returncode, stdout_text, stderr_text = 1, "", f"subprocess error: {e}"
 
     parsed = parse_result_line(stdout_text)
-    status, saved_3t, saved_2tf = infer_status(returncode, parsed)
+    status, saved_3t, saved_2tf, saved_3f = infer_status(returncode, parsed)
     finished_at = datetime.now()
 
     row = {
@@ -370,6 +392,7 @@ def run_fallback_scraper_job(
         "status": status,
         "saved_odds3t": saved_3t,
         "saved_odds2tf": saved_2tf,
+        "saved_odds3f": saved_3f,
         "recheck_ok": 1 if recheck_ok else 0,
         "reschedule_count": job["reschedule_count"],
         "stdout_last": tail_text(stdout_text),
@@ -381,13 +404,14 @@ def run_fallback_scraper_job(
     stats[status] += 1
 
     logger.info(
-        "[END] seq=%s race_id=%s returncode=%s status=%s saved_odds3t=%s saved_odds2tf=%s recheck_ok=%s reschedule_count=%s (fallback=scrape_odds_all.py)",
+        "[END] seq=%s race_id=%s returncode=%s status=%s saved_odds3t=%s saved_odds2tf=%s saved_odds3f=%s recheck_ok=%s reschedule_count=%s (fallback=scrape_odds_all.py)",
         job["seq"],
         job["race_id"],
         returncode,
         status,
         saved_3t,
         saved_2tf,
+        saved_3f,
         1 if recheck_ok else 0,
         job["reschedule_count"],
     )

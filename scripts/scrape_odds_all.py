@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 scrape_odds_all.py
-全レース対象で3連単/2連単・2連複オッズHTMLを取得・保存する検証版。
+全レース対象で3連単/2連単・2連複/3連複オッズHTMLを取得・保存する検証版。
 既存の保存先・命名規約を踏襲しつつ、1レースごとに機械可読な RESULT 行を出力する。
 """
 
@@ -76,8 +76,15 @@ async def main(date: str, jcd: str, rno: str, profile: str, mins_before: int) ->
         f"odds2tf{date}{jcd2}{rno2}.html",
     )
 
+    url_3f = f"https://www.boatrace.jp/owpc/pc/race/odds3f?rno={rno}&jcd={jcd2}&hd={date}"
+    save_path_3f = os.path.join(
+        paths.odds3f_date_dir(date),
+        f"odds3f{date}{jcd2}{rno2}.html",
+    )
+
     saved_odds3t = 0
     saved_odds2tf = 0
+    saved_odds3f = 0
 
     async with aiohttp.ClientSession(headers=HEADERS) as session:
         # 片方失敗でももう片方を試行
@@ -87,10 +94,14 @@ async def main(date: str, jcd: str, rno: str, profile: str, mins_before: int) ->
         res2 = await fetch_and_save(session, url_2tf, save_path_2tf)
         saved_odds2tf = 1 if res2.ok else 0
 
-    if saved_odds3t == 1 and saved_odds2tf == 1:
+        res3f = await fetch_and_save(session, url_3f, save_path_3f)
+        saved_odds3f = 1 if res3f.ok else 0
+
+    saved_count = saved_odds3t + saved_odds2tf + saved_odds3f
+    if saved_count == 3:
         status = "success"
         rc = 0
-    elif saved_odds3t == 1 or saved_odds2tf == 1:
+    elif saved_count >= 1:
         status = "partial"
         rc = 2
     else:
@@ -102,6 +113,7 @@ async def main(date: str, jcd: str, rno: str, profile: str, mins_before: int) ->
         f"status={status} "
         f"saved_odds3t={saved_odds3t} "
         f"saved_odds2tf={saved_odds2tf} "
+        f"saved_odds3f={saved_odds3f} "
         f"jcd={jcd2} rno={rno2} date={date}"
     )
     return rc
@@ -128,6 +140,7 @@ if __name__ == "__main__":
             "status=failed "
             "saved_odds3t=0 "
             "saved_odds2tf=0 "
+            "saved_odds3f=0 "
             f"jcd={jcd2} rno={rno2} date={args.date}"
         )
         exit_code = 1
